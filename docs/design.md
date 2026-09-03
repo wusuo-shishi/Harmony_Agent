@@ -165,6 +165,11 @@ entry/src/main/ets/
 - [x] D3:语音输入代码完成(CoreSpeech+麦克风+VAD,入口为聊天页【语音】按钮);**待真机联调**(手册见 docs/D3语音真机联调手册.md)
 - [x] 快照:git 仓库已初始化并首次提交(94caacc),进度可随时回退/同步
 - [ ] D4:知识库浅层(文件导入 + RetrievalProvider 双实现 + 引用溯源)
+  - [x] D4.1 知识数据模型(KnowledgeDoc/Chunk/RetrievalHit)+ 文本分块 + 敏感词自查
+  - [x] D4.2 KnowledgeStore:rawfile 示例导入、文档选择器导入、文件持久化(首次启动自动载入 3 篇示例)
+  - [x] D4.3 RetrievalProvider 接口 + 本地关键词检索(LocalKeywordRetrieval,含引用偏移/命中片段)+ DAG 占位(DagRetrievalProvider,待 D5 真机)
+  - [x] D4.4 知识库页(KnowledgePage):文档列表/删除、恢复示例、导入文档、检索即引用卡片(模拟器已可演示)
+  - [ ] D4.5 真机验证(导入真实文档/检索正确性/引用溯源核对)
 - [ ] D5:真机 DataAugmentationKit(AIP 检索自组装 RAG)
 - [ ] D6:Agent 编排(Orchestrator + 学习/日程/文档 子 Agent + 复合指令)
 - [ ] D7:跨端接续 + 一多布局

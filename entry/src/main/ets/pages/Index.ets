@@ -18,7 +18,7 @@ struct Index {
     ProviderHub.initFromConfig();
     const greeting: ChatMessage = ChatMessage.of(ChatRole.Assistant,
       '你好,我是 OpenHarmonyAgent(当前后端:' + ProviderHub.llmProvider().providerName + ')。\n' +
-      '输入任意文字,我会回复你。后续将接入语音、知识库与智能体编排。');
+      '输入任意文字,我会回复你。点右上角「知识库」可导入文档并检索(带引用溯源)。');
     this.appendMessage(greeting);
   }
 
@@ -39,6 +39,10 @@ struct Index {
       } catch (err) {
       }
     }, 80);
+  }
+
+  private openKnowledge(): void {
+    this.getUIContext().getRouter().pushUrl({ url: 'pages/KnowledgePage' });
   }
 
   private showToast(message: string): void {
@@ -96,6 +100,14 @@ struct Index {
           .fontSize(20)
           .fontWeight(FontWeight.Bold)
           .fontColor('#FFFFFF')
+          .layoutWeight(1)
+        Text('知识库')
+          .fontSize(14)
+          .fontColor('#FFFFFF')
+          .padding({ left: 12, right: 4, top: 6, bottom: 6 })
+          .onClick(() => {
+            this.openKnowledge();
+          })
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 14, bottom: 14 })
