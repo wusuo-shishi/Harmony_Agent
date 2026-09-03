@@ -162,7 +162,8 @@ entry/src/main/ets/
 
 - [x] D1:工程分层 + Provider 抽象 + CapabilityManager + Mock/Pangu 占位;模拟器运行环境打通(API22)
 - [x] D2:聊天 UI(Index)接入 ProviderHub,Mock LLM 端到端可对话(模拟器已部署可测)
-- [ ] D3:语音输入(CoreSpeech,真机)
+- [x] D3:语音输入代码完成(CoreSpeech+麦克风+VAD,入口为聊天页【语音】按钮);**待真机联调**(手册见 docs/D3语音真机联调手册.md)
+- [x] 快照:git 仓库已初始化并首次提交(94caacc),进度可随时回退/同步
 - [ ] D4:知识库浅层(文件导入 + RetrievalProvider 双实现 + 引用溯源)
 - [ ] D5:真机 DataAugmentationKit(AIP 检索自组装 RAG)
 - [ ] D6:Agent 编排(Orchestrator + 学习/日程/文档 子 Agent + 复合指令)
