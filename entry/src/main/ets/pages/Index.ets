@@ -1,5 +1,5 @@
 import { abilityAccessCtrl, common } from '@kit.AbilityKit';
-import { KeyboardAvoidMode, mediaquery } from '@kit.ArkUI';
+import { KeyboardAvoidMode, mediaquery, display } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { ChatMessage, ChatRole } from '../model/ChatModels';
@@ -32,6 +32,7 @@ struct Index {
   @State streamingText: string = '';
   @State streamingVisible: boolean = false;
   @State pendingImages: string[] = [];
+  @State bubbleCapVp: number = 420;
   private scroller: Scroller = new Scroller();
   private maxHistory: number = 20;
   private asr: AsrService = new AsrService();
@@ -107,9 +108,24 @@ struct Index {
     const listener = mediaquery.matchMediaSync('(width >= 600vp)');
     this.wideListener = listener;
     this.isWide = listener.matches && CapabilityManager.isLargeScreenDevice();
+    this.computeBubbleCap();
     listener.on('change', (result: mediaquery.MediaQueryResult) => {
       this.isWide = result.matches && CapabilityManager.isLargeScreenDevice();
+      this.computeBubbleCap();
     });
+  }
+
+  private computeBubbleCap(): void {
+    try {
+      const d = display.getDefaultDisplaySync();
+      const widthPx: number = d.width;
+      const density: number = d.densityPixels;
+      const widthVp: number = density > 0 ? widthPx / density : 0;
+      // 单栏取约 82% 屏宽,双栏左列约 50% 屏宽
+      const cap: number = this.isWide ? widthVp * 0.5 : widthVp * 0.82;
+      this.bubbleCapVp = Math.floor(cap);
+    } catch (err) {
+    }
   }
 
   private unregisterWideMode(): void {
@@ -465,46 +481,52 @@ struct Index {
   MessageBubble(msg: ChatMessage) {
     Column() {
       if (msg.content.length > 0) {
+        // 约束放在 Text 上:Column 按内容自适应宽度,文本超过 cap 时换行封顶
         Text(msg.content)
           .fontSize(16)
           .fontColor(msg.role === ChatRole.User ? '#FFFFFF' : '#1A1A1A')
           .lineHeight(22)
           .wordBreak(WordBreak.BREAK_ALL)
+          .constraintSize({ maxWidth: this.bubbleCapVp })
           .copyOption(CopyOptions.LocalDevice)
-          .width('100%')
       }
       if (msg.imageUris.length > 0) {
-        Scroll() {
-          Row({ space: 6 }) {
-            ForEach(msg.imageUris, (uri: string) => {
-              if (uri.startsWith('sample://')) {
-                Column() {
-                  Text('[图片]')
-                    .fontSize(13)
-                    .fontColor('#666666')
-                }
-                .width(120)
-                .height(90)
-                .justifyContent(FlexAlign.Center)
-                .backgroundColor('#EEF0F3')
-                .borderRadius(8)
-              } else {
-                Image(uri)
-                  .width(120)
-                  .height(90)
-                  .objectFit(ImageFit.Cover)
-                  .borderRadius(8)
+        Flex({ wrap: FlexWrap.Wrap }) {
+          ForEach(msg.imageUris.slice(0, 4), (uri: string) => {
+            if (uri.startsWith('sample://')) {
+              Column() {
+                Text('[图片]')
+                  .fontSize(12)
+                  .fontColor('#666666')
               }
-            }, (uri: string) => uri)
+              .width(70)
+              .height(52)
+              .justifyContent(FlexAlign.Center)
+              .backgroundColor('#EEF0F3')
+              .borderRadius(6)
+              .margin(2)
+            } else {
+              Image(uri)
+                .width(70)
+                .height(52)
+                .objectFit(ImageFit.Cover)
+                .borderRadius(6)
+                .margin(2)
+            }
+          }, (uri: string) => uri)
+          if (msg.imageUris.length > 4) {
+            Text(`+${msg.imageUris.length - 4}`)
+              .fontSize(14)
+              .fontColor('#8A8A8E')
+              .margin({ left: 4 })
           }
         }
-        .scrollable(ScrollDirection.Horizontal)
         .width('100%')
         .margin({ top: msg.content.length > 0 ? 6 : 0 })
       }
     }
     .alignItems(HorizontalAlign.Start)
-    .constraintSize({ maxWidth: msg.role === ChatRole.User ? '76%' : '88%' })
+    .constraintSize({ maxWidth: this.bubbleCapVp })
     .backgroundColor(msg.role === ChatRole.User ? '#0A59F7' : '#FFFFFF')
     .borderRadius(14)
     .padding({ left: 12, right: 12, top: 8, bottom: 8 })
@@ -540,7 +562,7 @@ struct Index {
                 .wordBreak(WordBreak.BREAK_ALL)
                 .copyOption(CopyOptions.LocalDevice)
             }
-            .constraintSize({ maxWidth: '88%' })
+            .width(this.bubbleCapVp)
             .backgroundColor('#FFFFFF')
             .borderRadius(14)
             .padding({ left: 12, right: 12, top: 8, bottom: 8 })
