@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit';
+import { mediaquery } from '@kit.ArkUI';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { ChatMessage, ChatRole } from '../model/ChatModels';
 import { LLMProvider } from '../provider/llm/LLMProvider';
@@ -8,6 +9,7 @@ import { KnowledgeStore } from '../knowledge/KnowledgeStore';
 import { CapabilityManager } from '../core/CapabilityManager';
 import { AgentDeps, Orchestrator } from '../agent/Orchestrator';
 import { AgentRunResult, AgentStep, AgentKind, StepState } from '../agent/AgentModels';
+import { KnowledgeView } from '../common/KnowledgeView';
 
 @Entry
 @Component
@@ -18,6 +20,8 @@ struct Index {
   @State voiceOn: boolean = false;
   @State agentRunning: boolean = false;
   @State agentTitle: string = '';
+  @State isWide: boolean = false;
+  private wideListener: mediaquery.MediaQueryListener | undefined = undefined;
   @State agentSteps: AgentStep[] = [];
   private scroller: Scroller = new Scroller();
   private maxHistory: number = 20;
@@ -28,6 +32,7 @@ struct Index {
 
   aboutToAppear(): void {
     ProviderHub.initFromConfig();
+    this.registerWideMode();
     const greeting: ChatMessage = ChatMessage.of(ChatRole.Assistant,
       '你好,我是 OpenHarmonyAgent(当前后端:' + ProviderHub.llmProvider().providerName + ')。\n' +
       '支持三类智能体,直接输入即可自动路由:\n' +
@@ -36,6 +41,26 @@ struct Index {
       '· 文档处理:点下方【识图】拍照/相册→OCR→总结\n' +
       '点右上角「知识库」可管理文档。');
     this.appendMessage(greeting);
+  }
+
+  aboutToDisappear(): void {
+    this.unregisterWideMode();
+  }
+
+  private registerWideMode(): void {
+    const listener = mediaquery.matchMediaSync('(width >= 840vp)');
+    this.wideListener = listener;
+    this.isWide = listener.matches;
+    listener.on('change', (result: mediaquery.MediaQueryResult) => {
+      this.isWide = result.matches;
+    });
+  }
+
+  private unregisterWideMode(): void {
+    if (this.wideListener !== undefined) {
+      this.wideListener.off('change');
+      this.wideListener = undefined;
+    }
   }
 
   private context(): common.UIAbilityContext {
@@ -276,26 +301,9 @@ struct Index {
     .padding(12)
   }
 
-  build() {
+  @Builder
+  ChatColumn() {
     Column() {
-      Row() {
-        Text('OpenHarmonyAgent')
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#FFFFFF')
-          .layoutWeight(1)
-        Text('知识库')
-          .fontSize(14)
-          .fontColor('#FFFFFF')
-          .padding({ left: 12, right: 4, top: 6, bottom: 6 })
-          .onClick(() => {
-            this.openKnowledge();
-          })
-      }
-      .width('100%')
-      .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-      .backgroundColor('#0A59F7')
-
       List({ space: 8, scroller: this.scroller }) {
         ForEach(this.messages, (msg: ChatMessage) => {
           ListItem() {
@@ -377,6 +385,70 @@ struct Index {
       .width('100%')
       .padding({ left: 12, right: 12, top: 8, bottom: 12 })
       .backgroundColor('#F1F3F5')
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  KnowledgePane() {
+    Column() {
+      Row() {
+        Text('知识库')
+          .fontSize(15)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#1A1A1A')
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .padding({ left: 14, right: 14, top: 12, bottom: 6 })
+      KnowledgeView({ embedded: true })
+        .layoutWeight(1)
+    }
+    .width('38%')
+    .height('100%')
+    .border({ width: { left: 1 }, color: '#E2E4E8' })
+    .backgroundColor('#F7F8FA')
+  }
+
+  build() {
+    Column() {
+      Row() {
+        Text('OpenHarmonyAgent')
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#FFFFFF')
+          .layoutWeight(1)
+        Text('知识库')
+          .fontSize(14)
+          .fontColor('#FFFFFF')
+          .padding({ left: 12, right: 4, top: 6, bottom: 6 })
+          .onClick(() => {
+            this.openKnowledge();
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+      .backgroundColor('#0A59F7')
+
+      if (this.isWide) {
+        Row() {
+          Column() {
+            this.ChatColumn()
+          }
+          .layoutWeight(1)
+          .height('100%')
+          this.KnowledgePane()
+        }
+        .width('100%')
+        .layoutWeight(1)
+      } else {
+        Column() {
+          this.ChatColumn()
+        }
+        .width('100%')
+        .layoutWeight(1)
+      }
     }
     .width('100%')
     .height('100%')
