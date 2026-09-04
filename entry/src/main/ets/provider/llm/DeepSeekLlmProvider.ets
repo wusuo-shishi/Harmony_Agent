@@ -2,6 +2,7 @@ import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import { ChatMessage, ChatRole } from '../../model/ChatModels';
 import { LLMProvider, ChatDeltaHandler } from './LLMProvider';
+import { AgentToolTurn, ToolCallMsg, ToolMessage } from './AgentToolTypes';
 
 interface RequestMessage {
   role: string;
@@ -36,6 +37,48 @@ interface StreamChoice {
 
 interface StreamChunk {
   choices?: StreamChoice[];
+}
+
+// ---- tools / function calling 解析结构 ----
+interface RawToolCall {
+  id?: string;
+  function?: RawToolFunction;
+}
+
+interface RawToolFunction {
+  name?: string;
+  arguments?: string;
+}
+
+interface RawMessage {
+  content?: string;
+  tool_calls?: RawToolCall[];
+}
+
+interface RawChoice {
+  message?: RawMessage;
+}
+
+interface RawResponse {
+  choices?: RawChoice[];
+}
+
+interface WireMessage {
+  role: string;
+  content: string;
+  tool_calls?: RawWireToolCall[];
+  tool_call_id?: string;
+}
+
+interface RawWireToolCall {
+  id: string;
+  type: string;
+  function: RawWireToolFunction;
+}
+
+interface RawWireToolFunction {
+  name: string;
+  arguments: string;
 }
 
 export class DeepSeekLlmProvider implements LLMProvider {
@@ -200,5 +243,83 @@ export class DeepSeekLlmProvider implements LLMProvider {
         reject(new Error(`DeepSeek 流式调用失败:${JSON.stringify(err)}`));
       });
     });
+  }
+
+  private toWireMessages(messages: ToolMessage[]): WireMessage[] {
+    const wires: WireMessage[] = [];
+    for (let i = 0; i < messages.length; i++) {
+      const msg: ToolMessage = messages[i];
+      const wire: WireMessage = { role: msg.role, content: msg.content };
+      if (msg.toolCalls.length > 0) {
+        const calls: RawWireToolCall[] = [];
+        for (let j = 0; j < msg.toolCalls.length; j++) {
+          const c: ToolCallMsg = msg.toolCalls[j];
+          const f: RawWireToolFunction = { name: c.name, arguments: c.argsJson };
+          const call: RawWireToolCall = { id: c.id, type: 'function', function: f };
+          calls.push(call);
+        }
+        wire.tool_calls = calls;
+      }
+      if (msg.role === 'tool' && msg.toolCallId.length > 0) {
+        wire.tool_call_id = msg.toolCallId;
+      }
+      wires.push(wire);
+    }
+    return wires;
+  }
+
+  async chatWithTools(messages: ToolMessage[], toolsJson: string): Promise<AgentToolTurn> {
+    if (this.apiKey.length === 0) {
+      throw new Error('DeepSeek 未配置 API Key,请在 LlmConfig.ets 中填写。');
+    }
+    const wires: WireMessage[] = this.toWireMessages(messages);
+    const tools: Array<Object> = JSON.parse(toolsJson) as Array<Object>;
+    const body: string = JSON.stringify({
+      model: this.model,
+      messages: wires,
+      tools: tools,
+      stream: false,
+      max_tokens: 1200
+    });
+    const requestOptions: http.HttpRequestOptions = {
+      method: http.RequestMethod.POST,
+      header: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`
+      },
+      extraData: body,
+      connectTimeout: 10000,
+      readTimeout: 60000
+    };
+    const httpRequest = http.createHttp();
+    try {
+      const response = await httpRequest.request(this.buildUrl(), requestOptions);
+      if (response.responseCode !== 200) {
+        throw new Error(`DeepSeek 工具请求失败,HTTP ${response.responseCode}`);
+      }
+      const text: string = response.result as string;
+      const parsed = JSON.parse(text) as RawResponse;
+      if (parsed.choices === undefined || parsed.choices.length === 0) {
+        return AgentToolTurn.reply('', true);
+      }
+      const rawMsg: RawMessage | undefined = parsed.choices[0].message;
+      const content: string = rawMsg?.content ?? '';
+      if (rawMsg?.tool_calls !== undefined && rawMsg.tool_calls.length > 0) {
+        const calls: ToolCallMsg[] = [];
+        for (let i = 0; i < rawMsg.tool_calls.length; i++) {
+          const raw: RawToolCall = rawMsg.tool_calls[i];
+          calls.push(ToolCallMsg.of(raw.id ?? `call_${i}`, raw.function?.name ?? '', raw.function?.arguments ?? '{}'));
+        }
+        return AgentToolTurn.withCalls(content, calls);
+      }
+      return AgentToolTurn.reply(content, true);
+    } catch (err) {
+      throw new Error(`DeepSeek 工具调用失败:${JSON.stringify(err)}`);
+    } finally {
+      try {
+        httpRequest.destroy();
+      } catch (err) {
+      }
+    }
   }
 }

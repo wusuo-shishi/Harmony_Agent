@@ -5,6 +5,7 @@ import { IntentRouter } from '../main/ets/agent/IntentRouter';
 import { ParsedSchedule } from '../main/ets/agent/ScheduleTextParser';
 import { ScheduleTextParser } from '../main/ets/agent/ScheduleTextParser';
 import { ChainPlan, ChainPlanner, ChainStepKind } from '../main/ets/agent/ChainPlanner';
+import { AgentTools } from '../main/ets/agent/AgentTools';
 
 export default function agentUnitTest() {
   describe('IntentRouter', () => {
@@ -239,6 +240,25 @@ export default function agentUnitTest() {
     it('greeting_returnsNoChain', 0, () => {
       const plan: ChainPlan | undefined = ChainPlanner.plan('你好');
       expect(plan).assertUndefined();
+    });
+  });
+
+  describe('AgentTools', () => {
+    it('buildToolsJson_containsThreeFunctions', 0, () => {
+      const json: string = AgentTools.buildToolsJson();
+      expect(json.indexOf('search_knowledge') >= 0).assertTrue();
+      expect(json.indexOf('recognize_summarize') >= 0).assertTrue();
+      expect(json.indexOf('create_schedule') >= 0).assertTrue();
+      const parsed = JSON.parse(json) as Array<Object>;
+      expect(parsed.length).assertEqual(3);
+    });
+
+    it('readStringArg_returnsEmptyWhenAbsent', 0, () => {
+      expect(AgentTools.readStringArg('{"query":"x"}', 'title')).assertEqual('');
+    });
+
+    it('readStringArg_returnsValue', 0, () => {
+      expect(AgentTools.readStringArg('{"query":"RAG是什么"}', 'query')).assertEqual('RAG是什么');
     });
   });
 }

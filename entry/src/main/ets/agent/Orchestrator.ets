@@ -1,6 +1,10 @@
 import { common } from '@kit.AbilityKit';
 import { LLMProvider } from '../provider/llm/LLMProvider';
 import { ChatDeltaHandler } from '../provider/llm/LLMProvider';
+import { DeepSeekLlmProvider } from '../provider/llm/DeepSeekLlmProvider';
+import { LlmConfig } from '../provider/llm/LlmConfig';
+import { AgentToolTurn, ToolCallMsg, ToolMessage } from '../provider/llm/AgentToolTypes';
+import { AgentTools } from './AgentTools';
 import { RetrievalProvider } from '../provider/retrieval/RetrievalProvider';
 import { ScheduleProvider } from '../provider/schedule/ScheduleProvider';
 import { VisionProvider } from '../provider/vision/VisionProvider';
@@ -47,6 +51,10 @@ export class Orchestrator {
 
   async execute(text: string, deps: AgentDeps, onStep: StepListener,
     onDelta?: ChatDeltaHandler): Promise<AgentRunResult> {
+    // Agentic(L2):开启且后端为 DeepSeek 时,优先让 LLM 自主决定是否调用工具
+    if (LlmConfig.ENABLE_AGENTIC && deps.llm instanceof DeepSeekLlmProvider) {
+      return await this.executeAgentic(text, deps, onStep, onDelta);
+    }
     // 复合指令优先:识别为链则交给 executeChain
     const plan: ChainPlan | undefined = ChainPlanner.plan(text);
     if (plan !== undefined) {
@@ -90,6 +98,86 @@ export class Orchestrator {
       result.answer = '抱歉,获取回复失败,请稍后重试。';
     }
     return result;
+  }
+
+  private async executeAgentic(text: string, deps: AgentDeps, onStep: StepListener,
+    onDelta?: ChatDeltaHandler): Promise<AgentRunResult> {
+    const llm: DeepSeekLlmProvider = deps.llm as DeepSeekLlmProvider;
+    const result: AgentRunResult = new AgentRunResult();
+    result.agentName = 'Agentic(LLM 自主编排)';
+    result.kind = AgentKind.General;
+    const steps: AgentStep[] = [];
+    const history: ToolMessage[] = [];
+    history.push(ToolMessage.user(text));
+    const toolsJson: string = AgentTools.buildToolsJson();
+    let finalText: string = '';
+    try {
+      for (let round = 0; round < 5; round++) {
+        const turn: AgentToolTurn = await llm.chatWithTools(history, toolsJson);
+        if (turn.toolCalls.length === 0) {
+          finalText = turn.text;
+          break;
+        }
+        history.push(ToolMessage.assistantCalls(turn.text, turn.toolCalls));
+        for (let c = 0; c < turn.toolCalls.length; c++) {
+          const call: ToolCallMsg = turn.toolCalls[c];
+          const step: AgentStep = AgentStep.of(`调用工具:${call.name}`);
+          steps.push(step);
+          onStep(steps);
+          const out: string = await this.execTool(call.name, call.argsJson, text, deps, onStep, onDelta);
+          const safeOut: string = out.length > 1500 ? out.substring(0, 1500) : out;
+          history.push(ToolMessage.toolResult(call.id, safeOut));
+          step.state = StepState.Done;
+          step.detail = out.length > 0 ? out.substring(0, 60) : '空结果';
+          onStep(steps);
+        }
+      }
+    } catch (err) {
+      finalText = '';
+    }
+    if (finalText.trim().length === 0) {
+      // 兜底:LLM 未走工具或无输出时,回退普通对话,保证始终有回复
+      try {
+        const historyMsgs: ChatMessage[] = [ChatMessage.of(ChatRole.User, text)];
+        finalText = await deps.llm.chat(historyMsgs);
+      } catch (err2) {
+        finalText = '抱歉,获取回复失败,请稍后重试。';
+      }
+    }
+    if (steps.length === 0) {
+      steps.push(AgentStep.of('1. LLM 自主判断无需调用工具,直接回答'));
+      steps[steps.length - 1].state = StepState.Done;
+    }
+    result.answer = finalText;
+    result.steps = steps;
+    onStep(steps);
+    return result;
+  }
+
+  private async execTool(name: string, argsJson: string, originText: string, deps: AgentDeps,
+    onStep: StepListener, onDelta?: ChatDeltaHandler): Promise<string> {
+    if (name === 'search_knowledge') {
+      const q: string = AgentTools.readStringArg(argsJson, 'query');
+      const query: string = q.length > 0 ? q : originText;
+      const sub = await this.learning.run(query, deps.llm, deps.retrieval, onStep, onDelta);
+      return sub.answer;
+    }
+    if (name === 'recognize_summarize') {
+      const hint: string = AgentTools.readStringArg(argsJson, 'hint');
+      this.prepareVisionProvider(deps);
+      const sub = await this.document.run(hint.length > 0 ? hint : originText, deps.llm, deps.vision,
+        deps.imageUri, deps.store, onStep, onDelta);
+      return sub.answer;
+    }
+    if (name === 'create_schedule') {
+      const title: string = AgentTools.readStringArg(argsJson, 'title');
+      const time: string = AgentTools.readStringArg(argsJson, 'time');
+      this.prepareScheduleProvider(deps);
+      const sentence: string = `${time} 安排「${title}」提醒我`;
+      const sub = await this.scheduleAgent.run(sentence, deps.llm, deps.schedule, onStep);
+      return sub.answer;
+    }
+    return `未知工具:${name}`;
   }
 
   private async runDocument(text: string, deps: AgentDeps, onStep: StepListener,
