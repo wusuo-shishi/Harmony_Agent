@@ -1,8 +1,24 @@
+import { KeyboardAvoidMode } from '@kit.ArkUI';
 import { KnowledgeView } from '../common/KnowledgeView';
 
 @Entry
 @Component
 struct KnowledgePage {
+  aboutToAppear(): void {
+    try {
+      // 键盘弹出时压缩内容区,避免顶部标题栏被顶出屏幕
+      this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.RESIZE);
+    } catch (err) {
+    }
+  }
+
+  aboutToDisappear(): void {
+    try {
+      this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.OFFSET);
+    } catch (err) {
+    }
+  }
+
   build() {
     Column() {
       Row() {

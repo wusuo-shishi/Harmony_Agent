@@ -1,5 +1,5 @@
 import { abilityAccessCtrl, common } from '@kit.AbilityKit';
-import { mediaquery } from '@kit.ArkUI';
+import { KeyboardAvoidMode, mediaquery } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { ChatMessage, ChatRole } from '../model/ChatModels';
@@ -39,6 +39,11 @@ struct Index {
   private agentGreetingShown: boolean = false;
 
   aboutToAppear(): void {
+    try {
+      // 键盘弹出时压缩内容区而非整体上抬,避免顶部栏被顶出屏幕
+      this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.RESIZE);
+    } catch (err) {
+    }
     ProviderHub.initFromConfig();
     this.registerWideMode();
     const ctx = this.context();
@@ -59,6 +64,10 @@ struct Index {
 
   aboutToDisappear(): void {
     this.unregisterWideMode();
+    try {
+      this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.OFFSET);
+    } catch (err) {
+    }
     const ctx = this.context();
     if (ctx !== undefined) {
       ctx.eventHub.off('continuationRestore', this.onContinuationRestore);
