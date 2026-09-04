@@ -82,6 +82,13 @@ struct Index {
     if (this.agentDeps === undefined) {
       this.agentDeps = new AgentDeps(ProviderHub.llmProvider(), ProviderHub.retrievalProvider(), KnowledgeStore.shared);
       this.agentDeps.uiContext = this.context();
+      this.agentDeps.requestImage = async (): Promise<string> => {
+        const picked: string = await this.pickPhoto();
+        if (picked.length === 0) {
+          this.showToast('未选择图片,已取消');
+        }
+        return picked;
+      };
     }
     return this.agentDeps;
   }
@@ -246,6 +253,25 @@ struct Index {
     await this.runAgent(text);
   }
 
+  private async pickPhoto(): Promise<string> {
+    if (CapabilityManager.isEmulator()) {
+      return '';
+    }
+    try {
+      const pickerInstance = new photoAccessHelper.PhotoViewPicker();
+      const opts: photoAccessHelper.PhotoSelectOptions = {
+        MIMEType: photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE,
+        maxSelectNumber: 1
+      };
+      const result: photoAccessHelper.PhotoSelectResult = await pickerInstance.select(opts);
+      if (result.photoUris.length > 0) {
+        return result.photoUris[0];
+      }
+    } catch (err) {
+    }
+    return '';
+  }
+
   private async onPickAndRecognize(): Promise<void> {
     if (this.agentRunning || this.loading) {
       return;
@@ -261,20 +287,7 @@ struct Index {
       await this.runAgent('拍一下这个文档,帮我总结重点');
       return;
     }
-    try {
-      const pickerInstance = new photoAccessHelper.PhotoViewPicker();
-      const opts: photoAccessHelper.PhotoSelectOptions = {
-        MIMEType: photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE,
-        maxSelectNumber: 1
-      };
-      const result: photoAccessHelper.PhotoSelectResult = await pickerInstance.select(opts);
-      if (result.photoUris.length > 0) {
-        uri = result.photoUris[0];
-      }
-    } catch (err) {
-      this.showToast('取消或无法打开相册');
-      return;
-    }
+    uri = await this.pickPhoto();
     if (uri.length === 0) {
       this.showToast('未选择图片');
       return;

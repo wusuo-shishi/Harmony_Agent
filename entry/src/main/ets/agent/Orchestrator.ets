@@ -4,7 +4,7 @@ import { RetrievalProvider } from '../provider/retrieval/RetrievalProvider';
 import { ScheduleProvider } from '../provider/schedule/ScheduleProvider';
 import { VisionProvider } from '../provider/vision/VisionProvider';
 import { KnowledgeStore } from '../knowledge/KnowledgeStore';
-import { AgentKind, AgentRunResult, AgentStep } from './AgentModels';
+import { AgentKind, AgentRunResult, AgentStep, StepState } from './AgentModels';
 import { RetrievalHit } from '../model/KnowledgeModels';
 import { RetrievalConfig } from '../provider/retrieval/RetrievalConfig';
 import { StepListener } from './StepListener';
@@ -27,6 +27,7 @@ export class AgentDeps {
   store: KnowledgeStore;
   uiContext: common.UIAbilityContext | undefined = undefined;
   imageUri: string = '';
+  requestImage: (() => Promise<string>) | undefined = undefined;
 
   constructor(llm: LLMProvider, retrieval: RetrievalProvider, store: KnowledgeStore) {
     this.llm = llm;
@@ -53,6 +54,32 @@ export class Orchestrator {
     }
     if (intent.kind === AgentKind.Document) {
       this.prepareVisionProvider(deps);
+      // 真机文档处理需要图片:纯文本说"拍一下…"时若无图,先拉起取图回调
+      if (!CapabilityManager.isEmulator() && deps.imageUri.length === 0 && deps.requestImage !== undefined) {
+        const steps: AgentStep[] = [];
+        steps.push(AgentStep.of('1. 检测到文档/识图意图'));
+        onStep(steps);
+        steps.push(AgentStep.of('2. 请选择或拍摄图片'));
+        onStep(steps);
+        try {
+          const picked: string = await deps.requestImage();
+          if (picked.length > 0) {
+            deps.imageUri = picked;
+            steps[steps.length - 1].state = StepState.Done;
+            steps[steps.length - 1].detail = '已获取图片,开始 OCR';
+            onStep(steps);
+            return await this.document.run(text, deps.llm, deps.vision, deps.imageUri, deps.store, onStep);
+          }
+        } catch (err) {
+        }
+        const cancelled: AgentRunResult = new AgentRunResult();
+        cancelled.kind = AgentKind.Document;
+        cancelled.agentName = '文档处理';
+        cancelled.steps = steps;
+        cancelled.answer = '未选择图片,已取消文档处理。可点下方【识图】按钮重新拍照/选择,或输入要处理的文字内容。';
+        onStep(steps);
+        return cancelled;
+      }
       return await this.document.run(text, deps.llm, deps.vision, deps.imageUri, deps.store, onStep);
     }
     // General(无明确操作意图):先探测知识库,命中则给带引用回答;未命中才纯通用对话
