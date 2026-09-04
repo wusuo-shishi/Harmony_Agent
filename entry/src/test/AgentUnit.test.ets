@@ -6,6 +6,8 @@ import { ParsedSchedule } from '../main/ets/agent/ScheduleTextParser';
 import { ScheduleTextParser } from '../main/ets/agent/ScheduleTextParser';
 import { ChainPlan, ChainPlanner, ChainStepKind } from '../main/ets/agent/ChainPlanner';
 import { AgentTools } from '../main/ets/agent/AgentTools';
+import { ChatMessage, ChatRole } from '../main/ets/model/ChatModels';
+import { SessionCodec } from '../main/ets/core/SessionCodec';
 
 export default function agentUnitTest() {
   describe('IntentRouter', () => {
@@ -259,6 +261,31 @@ export default function agentUnitTest() {
 
     it('readStringArg_returnsValue', 0, () => {
       expect(AgentTools.readStringArg('{"query":"RAG是什么"}', 'query')).assertEqual('RAG是什么');
+    });
+  });
+
+  describe('SessionCodec', () => {
+    it('roundTrip_preservesMessages', 0, () => {
+      const msgs: ChatMessage[] = [
+        ChatMessage.of(ChatRole.User, '明天下午三点开会'),
+        ChatMessage.of(ChatRole.Assistant, '已安排日程')
+      ];
+      const json: string = SessionCodec.encode(msgs);
+      const restored: ChatMessage[] = SessionCodec.decode(json);
+      expect(restored.length).assertEqual(2);
+      expect(restored[0].role).assertEqual(ChatRole.User);
+      expect(restored[0].content).assertEqual('明天下午三点开会');
+      expect(restored[1].role).assertEqual(ChatRole.Assistant);
+      expect(restored[1].content).assertEqual('已安排日程');
+    });
+
+    it('emptyEncode_decodeReturnsEmpty', 0, () => {
+      const restored: ChatMessage[] = SessionCodec.decode(SessionCodec.encode([]));
+      expect(restored.length).assertEqual(0);
+    });
+
+    it('badJson_returnsEmpty', 0, () => {
+      expect(SessionCodec.decode('not-json{').length).assertEqual(0);
     });
   });
 }

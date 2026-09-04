@@ -3,6 +3,7 @@ import { mediaquery } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { ChatMessage, ChatRole } from '../model/ChatModels';
+import { SessionCodec } from '../core/SessionCodec';
 import { LLMProvider } from '../provider/llm/LLMProvider';
 import { ProviderHub } from '../provider/ProviderHub';
 import { AsrService } from '../provider/asr/AsrService';
@@ -40,18 +41,54 @@ struct Index {
   aboutToAppear(): void {
     ProviderHub.initFromConfig();
     this.registerWideMode();
-    const greeting: ChatMessage = ChatMessage.of(ChatRole.Assistant,
-      '你好,我是 OpenHarmonyAgent(当前后端:' + ProviderHub.llmProvider().providerName + ')。\n' +
-      '支持三类智能体,直接输入即可自动路由:\n' +
-      '· 学习助手:如「引用溯源是什么」→ 检索知识库+引用回答\n' +
-      '· 日程管家:如「明天下午3点开组会提醒我」\n' +
-      '· 文档处理:点下方【识图】拍照/相册→OCR→总结\n' +
-      '点右上角「知识库」可管理文档。');
-    this.appendMessage(greeting);
+    const ctx = this.context();
+    if (ctx !== undefined) {
+      ctx.eventHub.on('continuationRestore', this.onContinuationRestore);
+    }
+    if (!this.tryRestoreSession()) {
+      const greeting: ChatMessage = ChatMessage.of(ChatRole.Assistant,
+        '你好,我是 OpenHarmonyAgent(当前后端:' + ProviderHub.llmProvider().providerName + ')。\n' +
+        '支持三类智能体,直接输入即可自动路由:\n' +
+        '· 学习助手:如「引用溯源是什么」→ 检索知识库+引用回答\n' +
+        '· 日程管家:如「明天下午3点开组会提醒我」\n' +
+        '· 文档处理:点下方【识图】拍照/相册→OCR→总结\n' +
+        '点右上角「知识库」可管理文档。');
+      this.appendMessage(greeting);
+    }
   }
 
   aboutToDisappear(): void {
     this.unregisterWideMode();
+    const ctx = this.context();
+    if (ctx !== undefined) {
+      ctx.eventHub.off('continuationRestore', this.onContinuationRestore);
+    }
+  }
+
+  private onContinuationRestore = (): void => {
+    if (this.tryRestoreSession()) {
+      this.scrollToBottom();
+    }
+  };
+
+  private tryRestoreSession(): boolean {
+    const restored: string | undefined = AppStorage.get<string>('restoredSession');
+    if (restored === undefined || restored.length === 0) {
+      return false;
+    }
+    const restoredMsgs: ChatMessage[] = SessionCodec.decode(restored);
+    if (restoredMsgs.length === 0) {
+      AppStorage.delete('restoredSession');
+      return false;
+    }
+    this.messages = restoredMsgs;
+    AppStorage.delete('restoredSession');
+    this.syncSessionSnapshot();
+    return true;
+  }
+
+  private syncSessionSnapshot(): void {
+    AppStorage.setOrCreate<string>('sessionSnapshot', SessionCodec.encode(this.messages));
   }
 
   private registerWideMode(): void {
@@ -98,6 +135,7 @@ struct Index {
   private appendMessage(msg: ChatMessage): void {
     const next: ChatMessage[] = this.messages.concat(msg);
     this.messages = next;
+    this.syncSessionSnapshot();
     this.scrollToBottom();
   }
 
