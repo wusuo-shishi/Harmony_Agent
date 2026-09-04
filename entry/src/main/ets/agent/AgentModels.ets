@@ -45,4 +45,5 @@ export class AgentRunResult {
   agentName: string = '';
   steps: AgentStep[] = [];
   answer: string = '';
+  payload: string = '';
 }

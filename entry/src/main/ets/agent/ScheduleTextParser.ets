@@ -25,7 +25,8 @@ export class ScheduleTextParser {
   private static readonly weekdays: string[] = ['日', '一', '二', '三', '四', '五', '六'];
 
   static parse(text: string): ParsedSchedule {
-    let work: string = text.replace(new RegExp('[，,。.！!？?]', 'g'), ' ');
+    let work: string = text.replace(new RegExp('\\s+', 'g'), '');
+    work = work.replace(new RegExp('[，,。.！!？?]', 'g'), ' ');
     work = ScheduleTextParser.stripReminderPrefix(work);
     const dateInfo: DateToken | undefined = ScheduleTextParser.resolveDate(work);
     if (dateInfo === undefined) {

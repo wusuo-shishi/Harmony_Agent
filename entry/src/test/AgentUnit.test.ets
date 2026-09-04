@@ -4,6 +4,7 @@ import { IntentResult } from '../main/ets/agent/IntentRouter';
 import { IntentRouter } from '../main/ets/agent/IntentRouter';
 import { ParsedSchedule } from '../main/ets/agent/ScheduleTextParser';
 import { ScheduleTextParser } from '../main/ets/agent/ScheduleTextParser';
+import { ChainPlan, ChainPlanner, ChainStepKind } from '../main/ets/agent/ChainPlanner';
 
 export default function agentUnitTest() {
   describe('IntentRouter', () => {
@@ -203,6 +204,41 @@ export default function agentUnitTest() {
         // 无前缀且 10 不在 1-7,不转下午
         expect(new Date(p.draft.startTime).getHours()).assertEqual(10);
       }
+    });
+  });
+
+  describe('ChainPlanner', () => {
+    it('photoAndSchedule_buildsDocumentScheduleChain', 0, () => {
+      const plan: ChainPlan | undefined = ChainPlanner.plan('拍一下会议纪要,总结后把待办写进日程提醒我');
+      expect(plan !== undefined).assertTrue();
+      if (plan !== undefined) {
+        expect(plan.steps.length).assertEqual(2);
+        expect(plan.steps[0]).assertEqual(ChainStepKind.Document);
+        expect(plan.steps[1]).assertEqual(ChainStepKind.Schedule);
+      }
+    });
+
+    it('photoAndMeeting_buildsChain', 0, () => {
+      const plan: ChainPlan | undefined = ChainPlanner.plan('识别这张照片,里面有会议安排请加进日程');
+      expect(plan !== undefined).assertTrue();
+      if (plan !== undefined) {
+        expect(plan.steps[1]).assertEqual(ChainStepKind.Schedule);
+      }
+    });
+
+    it('pureDocument_returnsNoChain', 0, () => {
+      const plan: ChainPlan | undefined = ChainPlanner.plan('拍一下这个文档帮我总结重点');
+      expect(plan).assertUndefined();
+    });
+
+    it('pureSchedule_returnsNoChain', 0, () => {
+      const plan: ChainPlan | undefined = ChainPlanner.plan('明天下午3点开组会提醒我');
+      expect(plan).assertUndefined();
+    });
+
+    it('greeting_returnsNoChain', 0, () => {
+      const plan: ChainPlan | undefined = ChainPlanner.plan('你好');
+      expect(plan).assertUndefined();
     });
   });
 }

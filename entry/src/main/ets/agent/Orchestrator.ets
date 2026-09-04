@@ -10,6 +10,7 @@ import { RetrievalHit } from '../model/KnowledgeModels';
 import { RetrievalConfig } from '../provider/retrieval/RetrievalConfig';
 import { StepListener } from './StepListener';
 import { IntentResult, IntentRouter } from './IntentRouter';
+import { ChainPlan, ChainPlanner, ChainStepKind } from './ChainPlanner';
 import { LearningAgent } from './LearningAgent';
 import { ScheduleAgent } from './ScheduleAgent';
 import { DocumentAgent } from './DocumentAgent';
@@ -46,6 +47,11 @@ export class Orchestrator {
 
   async execute(text: string, deps: AgentDeps, onStep: StepListener,
     onDelta?: ChatDeltaHandler): Promise<AgentRunResult> {
+    // 复合指令优先:识别为链则交给 executeChain
+    const plan: ChainPlan | undefined = ChainPlanner.plan(text);
+    if (plan !== undefined) {
+      return await this.executeChain(plan, text, deps, onStep, onDelta);
+    }
     const intent: IntentResult = IntentRouter.route(text);
     if (intent.kind === AgentKind.Learning) {
       return await this.learning.run(text, deps.llm, deps.retrieval, onStep, onDelta);
@@ -55,34 +61,7 @@ export class Orchestrator {
       return await this.scheduleAgent.run(text, deps.llm, deps.schedule, onStep);
     }
     if (intent.kind === AgentKind.Document) {
-      this.prepareVisionProvider(deps);
-      // 真机文档处理需要图片:纯文本说"拍一下…"时若无图,先拉起取图回调
-      if (!CapabilityManager.isEmulator() && deps.imageUri.length === 0 && deps.requestImage !== undefined) {
-        const steps: AgentStep[] = [];
-        steps.push(AgentStep.of('1. 检测到文档/识图意图'));
-        onStep(steps);
-        steps.push(AgentStep.of('2. 请选择或拍摄图片'));
-        onStep(steps);
-        try {
-          const picked: string = await deps.requestImage();
-          if (picked.length > 0) {
-            deps.imageUri = picked;
-            steps[steps.length - 1].state = StepState.Done;
-            steps[steps.length - 1].detail = '已获取图片,开始 OCR';
-            onStep(steps);
-            return await this.document.run(text, deps.llm, deps.vision, deps.imageUri, deps.store, onStep, onDelta);
-          }
-        } catch (err) {
-        }
-        const cancelled: AgentRunResult = new AgentRunResult();
-        cancelled.kind = AgentKind.Document;
-        cancelled.agentName = '文档处理';
-        cancelled.steps = steps;
-        cancelled.answer = '未选择图片,已取消文档处理。可点下方【识图】按钮重新拍照/选择,或输入要处理的文字内容。';
-        onStep(steps);
-        return cancelled;
-      }
-      return await this.document.run(text, deps.llm, deps.vision, deps.imageUri, deps.store, onStep, onDelta);
+      return await this.runDocument(text, deps, onStep, onDelta);
     }
     // General(无明确操作意图):先探测知识库,命中则给带引用回答;未命中才纯通用对话
     let probeHits: RetrievalHit[] = [];
@@ -111,6 +90,161 @@ export class Orchestrator {
       result.answer = '抱歉,获取回复失败,请稍后重试。';
     }
     return result;
+  }
+
+  private async runDocument(text: string, deps: AgentDeps, onStep: StepListener,
+    onDelta?: ChatDeltaHandler): Promise<AgentRunResult> {
+    this.prepareVisionProvider(deps);
+    // 真机文档处理需要图片:纯文本说"拍一下…"时若无图,先拉起取图回调
+    if (!CapabilityManager.isEmulator() && deps.imageUri.length === 0 && deps.requestImage !== undefined) {
+      const steps: AgentStep[] = [];
+      steps.push(AgentStep.of('1. 检测到文档/识图意图'));
+      onStep(steps);
+      steps.push(AgentStep.of('2. 请选择或拍摄图片'));
+      onStep(steps);
+      try {
+        const picked: string = await deps.requestImage();
+        if (picked.length > 0) {
+          deps.imageUri = picked;
+          steps[steps.length - 1].state = StepState.Done;
+          steps[steps.length - 1].detail = '已获取图片,开始 OCR';
+          onStep(steps);
+          return await this.document.run(text, deps.llm, deps.vision, deps.imageUri, deps.store, onStep, onDelta);
+        }
+      } catch (err) {
+      }
+      const cancelled: AgentRunResult = new AgentRunResult();
+      cancelled.kind = AgentKind.Document;
+      cancelled.agentName = '文档处理';
+      cancelled.steps = steps;
+      cancelled.answer = '未选择图片,已取消文档处理。可点下方【识图】按钮重新拍照/选择,或输入要处理的文字内容。';
+      onStep(steps);
+      return cancelled;
+    }
+    return await this.document.run(text, deps.llm, deps.vision, deps.imageUri, deps.store, onStep, onDelta);
+  }
+
+  private async executeChain(plan: ChainPlan, text: string, deps: AgentDeps, onStep: StepListener,
+    onDelta?: ChatDeltaHandler): Promise<AgentRunResult> {
+    const result: AgentRunResult = new AgentRunResult();
+    const allSteps: AgentStep[] = [];
+    const seen: Set<string> = new Set<string>();
+    const subResults: AgentRunResult[] = [];
+    let carry: string = '';
+    // 链首步若为文档处理:真机需先有图片,无图则请求取图;未取得则取消整链
+    if (plan.steps.length > 0 && plan.steps[0] === ChainStepKind.Document) {
+      this.prepareVisionProvider(deps);
+      if (!CapabilityManager.isEmulator() && deps.imageUri.length === 0 && deps.requestImage !== undefined) {
+        const stepPick: AgentStep = AgentStep.of('0. 请选择或拍摄待处理图片');
+        allSteps.push(stepPick);
+        onStep(allSteps);
+        try {
+          const picked: string = await deps.requestImage();
+          if (picked.length === 0) {
+            const cancelled: AgentRunResult = new AgentRunResult();
+            cancelled.kind = AgentKind.Document;
+            cancelled.agentName = '复合任务';
+            cancelled.steps = allSteps;
+            cancelled.answer = '未选择图片,已取消复合任务。可点下方【识图】按钮重新选择。';
+            onStep(allSteps);
+            return cancelled;
+          }
+          deps.imageUri = picked;
+          stepPick.state = StepState.Done;
+          stepPick.detail = '已获取图片';
+          onStep(allSteps);
+        } catch (err) {
+          const cancelled: AgentRunResult = new AgentRunResult();
+          cancelled.kind = AgentKind.Document;
+          cancelled.agentName = '复合任务';
+          cancelled.steps = allSteps;
+          cancelled.answer = '获取图片失败,已取消复合任务。';
+          onStep(allSteps);
+          return cancelled;
+        }
+      }
+    }
+    for (let i = 0; i < plan.steps.length; i++) {
+      const kind: ChainStepKind = plan.steps[i];
+      let sub: AgentRunResult = new AgentRunResult();
+      if (kind === ChainStepKind.Document) {
+        const stepHead: AgentStep = AgentStep.of(`第${i + 1}步(文档处理):识别并总结`);
+        allSteps.push(stepHead);
+        onStep(allSteps);
+        sub = await this.document.run(carry.length > 0 ? carry : text, deps.llm, deps.vision, deps.imageUri,
+          deps.store, onStep, onDelta);
+        if (sub.payload.length === 0) {
+          sub.payload = sub.answer;
+        }
+      } else if (kind === ChainStepKind.Schedule) {
+        this.prepareScheduleProvider(deps);
+        const stepHead: AgentStep = AgentStep.of(`第${i + 1}步(日程管家):将待办写入日程`);
+        allSteps.push(stepHead);
+        onStep(allSteps);
+        // 日程输入优先取上游原始文本(payload),否则用上一步结果文本
+        const scheduleInput: string = carry.length > 0 ? carry : text;
+        sub = await this.scheduleAgent.run(scheduleInput, deps.llm, deps.schedule, onStep);
+      } else if (kind === ChainStepKind.Learning) {
+        const stepHead: AgentStep = AgentStep.of(`第${i + 1}步(学习助手):知识库问答`);
+        allSteps.push(stepHead);
+        onStep(allSteps);
+        const learnText: string = carry.length > 0 ? carry : text;
+        sub = await this.learning.run(learnText, deps.llm, deps.retrieval, onStep, onDelta);
+      }
+      subResults.push(sub);
+      if (sub.payload.length > 0) {
+        carry = sub.payload;
+      } else if (sub.answer.length > 0) {
+        carry = sub.answer;
+      }
+      for (let s = 0; s < sub.steps.length; s++) {
+        const t: string = sub.steps[s].title;
+        if (!seen.has(t)) {
+          seen.add(t);
+          allSteps.push(sub.steps[s]);
+        }
+      }
+    }
+    result.agentName = this.chainName(plan.steps);
+    result.kind = this.chainTopKind(plan.steps);
+    const answers: string[] = [];
+    for (let i = 0; i < subResults.length; i++) {
+      if (subResults[i].answer.length > 0) {
+        answers.push(subResults[i].answer);
+      }
+    }
+    result.answer = answers.length > 0 ? answers.join('\n\n---\n\n') : '复合任务已执行完成,但未产生可展示结果。';
+    result.payload = carry;
+    result.steps = allSteps;
+    onStep(allSteps);
+    return result;
+  }
+
+  private chainName(steps: ChainStepKind[]): string {
+    const names: string[] = [];
+    for (let i = 0; i < steps.length; i++) {
+      if (steps[i] === ChainStepKind.Document) {
+        names.push('文档处理');
+      } else if (steps[i] === ChainStepKind.Schedule) {
+        names.push('日程管家');
+      } else {
+        names.push('学习助手');
+      }
+    }
+    return `复合任务(${names.join(' → ')})`;
+  }
+
+  private chainTopKind(steps: ChainStepKind[]): AgentKind {
+    if (steps.length > 0 && steps[0] === ChainStepKind.Document) {
+      return AgentKind.Document;
+    }
+    if (steps.length > 0 && steps[0] === ChainStepKind.Schedule) {
+      return AgentKind.Schedule;
+    }
+    if (steps.length > 0 && steps[0] === ChainStepKind.Learning) {
+      return AgentKind.Learning;
+    }
+    return AgentKind.General;
   }
 
   private prepareScheduleProvider(deps: AgentDeps): void {

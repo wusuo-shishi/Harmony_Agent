@@ -71,6 +71,7 @@ export class DocumentAgent {
     }
 
     result.answer = `【OCR 文档处理完成】\n\n${summary}${savedInfo}`;
+    result.payload = text;
     result.steps = steps;
     onStep(steps);
     return result;
