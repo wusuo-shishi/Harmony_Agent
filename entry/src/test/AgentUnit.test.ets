@@ -38,8 +38,8 @@ export default function agentUnitTest() {
     });
 
     it('mixedText_withDate_prioritizesSchedule', 0, () => {
-      // 同时含「提醒」(日程)与「检索」(学习),含时间词,应判日程
-      const r: IntentResult = IntentRouter.route('明天下午提醒我检索知识库资料');
+      // 同时含「提醒/会议」(日程)与「资料」(学习),含时间词,日程信号更强应判日程
+      const r: IntentResult = IntentRouter.route('明天下午提醒我整理会议资料');
       expect(r.kind).assertEqual(AgentKind.Schedule);
     });
   });

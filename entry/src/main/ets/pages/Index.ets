@@ -1,5 +1,6 @@
-import { common } from '@kit.AbilityKit';
+import { abilityAccessCtrl, common } from '@kit.AbilityKit';
 import { mediaquery } from '@kit.ArkUI';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { ChatMessage, ChatRole } from '../model/ChatModels';
 import { LLMProvider } from '../provider/llm/LLMProvider';
@@ -10,6 +11,10 @@ import { CapabilityManager } from '../core/CapabilityManager';
 import { AgentDeps, Orchestrator } from '../agent/Orchestrator';
 import { AgentRunResult, AgentStep, AgentKind, StepState } from '../agent/AgentModels';
 import { KnowledgeView } from '../common/KnowledgeView';
+
+interface PermissionRequest {
+  authResults: number[];
+}
 
 @Entry
 @Component
@@ -109,10 +114,48 @@ struct Index {
     }
   }
 
+  private async ensureMicPermission(): Promise<boolean> {
+    const atManager = abilityAccessCtrl.createAtManager();
+    try {
+      const status: abilityAccessCtrl.GrantStatus =
+        atManager.checkAccessTokenSync(this.context().applicationInfo.accessTokenId, 'ohos.permission.MICROPHONE');
+      if (status === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) {
+        return true;
+      }
+    } catch (err) {
+    }
+    try {
+      const grantResult = await atManager.requestPermissionsFromUser(this.context(), ['ohos.permission.MICROPHONE']);
+      hilog.info(0x0000, 'MicPerm', 'grantResult=%{public}s', JSON.stringify(grantResult));
+      return this.grantedOf(grantResult);
+    } catch (err) {
+      hilog.error(0x0000, 'MicPerm', 'request fail err=%{public}s', JSON.stringify(err));
+      return false;
+    }
+  }
+
+  private grantedOf(result: Object): boolean {
+    const cast = result as PermissionRequest;
+    if (cast.authResults.length > 0 && cast.authResults[0] === 0) {
+      return true;
+    }
+    // authResults=-1 且 dialogShownResults=false 表示系统未弹授权框(如模拟器不支持)
+    // 此时不必反复请求,交回上层给出友好提示
+    return false;
+  }
+
   private async toggleVoice(): Promise<void> {
     if (this.voiceOn) {
       this.voiceOn = false;
       await this.asr.stop();
+      return;
+    }
+    const ok: boolean = await this.ensureMicPermission();
+    if (!ok) {
+      const hint: string = CapabilityManager.isEmulator()
+        ? '模拟器无法授权麦克风,语音输入请使用真机(可先尝试设置中授权)'
+        : '麦克风权限被拒绝,请到系统设置中为本应用开启麦克风权限';
+      this.showToast(hint);
       return;
     }
     this.voiceOn = true;
