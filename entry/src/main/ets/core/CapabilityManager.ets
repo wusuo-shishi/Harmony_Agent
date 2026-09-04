@@ -16,4 +16,8 @@ export class CapabilityManager {
   static supportsRealtimeAsr(): boolean {
     return !CapabilityManager.isEmulator();
   }
+
+  static supportsCalendar(): boolean {
+    return !CapabilityManager.isEmulator();
+  }
 }

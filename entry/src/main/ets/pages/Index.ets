@@ -1,7 +1,13 @@
+import { common } from '@kit.AbilityKit';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { ChatMessage, ChatRole } from '../model/ChatModels';
 import { LLMProvider } from '../provider/llm/LLMProvider';
 import { ProviderHub } from '../provider/ProviderHub';
 import { AsrService } from '../provider/asr/AsrService';
+import { KnowledgeStore } from '../knowledge/KnowledgeStore';
+import { CapabilityManager } from '../core/CapabilityManager';
+import { AgentDeps, Orchestrator } from '../agent/Orchestrator';
+import { AgentRunResult, AgentStep, AgentKind, StepState } from '../agent/AgentModels';
 
 @Entry
 @Component
@@ -10,16 +16,42 @@ struct Index {
   @State inputText: string = '';
   @State loading: boolean = false;
   @State voiceOn: boolean = false;
+  @State agentRunning: boolean = false;
+  @State agentTitle: string = '';
+  @State agentSteps: AgentStep[] = [];
   private scroller: Scroller = new Scroller();
   private maxHistory: number = 20;
   private asr: AsrService = new AsrService();
+  private orchestrator: Orchestrator = new Orchestrator();
+  private agentDeps: AgentDeps | undefined = undefined;
+  private agentGreetingShown: boolean = false;
 
   aboutToAppear(): void {
     ProviderHub.initFromConfig();
     const greeting: ChatMessage = ChatMessage.of(ChatRole.Assistant,
       '你好,我是 OpenHarmonyAgent(当前后端:' + ProviderHub.llmProvider().providerName + ')。\n' +
-      '输入任意文字,我会回复你。点右上角「知识库」可导入文档并检索(带引用溯源)。');
+      '支持三类智能体,直接输入即可自动路由:\n' +
+      '· 学习助手:如「引用溯源是什么」→ 检索知识库+引用回答\n' +
+      '· 日程管家:如「明天下午3点开组会提醒我」\n' +
+      '· 文档处理:点下方【识图】拍照/相册→OCR→总结\n' +
+      '点右上角「知识库」可管理文档。');
     this.appendMessage(greeting);
+  }
+
+  private context(): common.UIAbilityContext {
+    const host = this.getUIContext().getHostContext();
+    if (host === undefined) {
+      return getContext(this) as common.UIAbilityContext;
+    }
+    return host as common.UIAbilityContext;
+  }
+
+  private ensureAgentDeps(): AgentDeps {
+    if (this.agentDeps === undefined) {
+      this.agentDeps = new AgentDeps(ProviderHub.llmProvider(), ProviderHub.retrievalProvider(), KnowledgeStore.shared);
+      this.agentDeps.uiContext = this.context();
+    }
+    return this.agentDeps;
   }
 
   private appendMessage(msg: ChatMessage): void {
@@ -72,25 +104,176 @@ struct Index {
     });
   }
 
+  private renderSteps(steps: AgentStep[]): void {
+    this.agentSteps = steps.slice();
+  }
+
+  private async runAgent(text: string): Promise<void> {
+    if (this.agentRunning) {
+      return;
+    }
+    const deps: AgentDeps = this.ensureAgentDeps();
+    if (deps.uiContext === undefined) {
+      deps.uiContext = this.context();
+    }
+    if (!KnowledgeStore.shared.isReady()) {
+      try {
+        await KnowledgeStore.shared.init(this.context());
+      } catch (err) {
+      }
+    }
+    this.agentRunning = true;
+    this.agentTitle = '智能体处理中…';
+    this.agentSteps = [AgentStep.of('识别意图…')];
+    this.scrollToBottom();
+    try {
+      const result: AgentRunResult = await this.orchestrator.execute(text, deps, (steps: AgentStep[]): void => {
+        this.renderSteps(steps);
+        this.scrollToBottom();
+      });
+      this.agentTitle = this.agentNameOf(result.kind);
+      if (result.answer.trim().length > 0) {
+        this.appendMessage(ChatMessage.of(ChatRole.Assistant, result.answer));
+      }
+      this.agentSteps = [];
+    } catch (err) {
+      this.agentSteps = [];
+      this.appendMessage(ChatMessage.of(ChatRole.Assistant, '智能体执行失败,请稍后重试。'));
+    } finally {
+      this.agentRunning = false;
+      this.agentTitle = '';
+    }
+  }
+
+  private agentNameOf(kind: AgentKind): string {
+    if (kind === AgentKind.Learning) {
+      return '学习助手';
+    }
+    if (kind === AgentKind.Schedule) {
+      return '日程管家';
+    }
+    if (kind === AgentKind.Document) {
+      return '文档处理';
+    }
+    return '通用对话';
+  }
+
   private async onSend(): Promise<void> {
     const text: string = this.inputText.trim();
-    if (text.length === 0 || this.loading) {
+    if (text.length === 0 || this.loading || this.agentRunning) {
       return;
     }
     this.inputText = '';
     this.appendMessage(ChatMessage.of(ChatRole.User, text));
-    this.loading = true;
-    try {
-      const provider: LLMProvider = ProviderHub.llmProvider();
-      const startIndex: number = Math.max(0, this.messages.length - this.maxHistory);
-      const history: ChatMessage[] = this.messages.slice(startIndex);
-      const reply: string = await provider.chat(history);
-      this.appendMessage(ChatMessage.of(ChatRole.Assistant, reply));
-    } catch (err) {
-      this.appendMessage(ChatMessage.of(ChatRole.Assistant, '抱歉,获取回复失败,请稍后重试。'));
-    } finally {
-      this.loading = false;
+    await this.runAgent(text);
+  }
+
+  private async onPickAndRecognize(): Promise<void> {
+    if (this.agentRunning || this.loading) {
+      return;
     }
+    if (this.agentDeps !== undefined) {
+      this.agentDeps.imageUri = '';
+    }
+    const deps: AgentDeps = this.ensureAgentDeps();
+    let uri: string = '';
+    if (CapabilityManager.isEmulator()) {
+      // 模拟器无相机/OCR:使用内置示例文本走完整流程
+      this.appendMessage(ChatMessage.of(ChatRole.User, '识图:拍一下这个文档,帮我总结重点'));
+      await this.runAgent('拍一下这个文档,帮我总结重点');
+      return;
+    }
+    try {
+      const pickerInstance = new photoAccessHelper.PhotoViewPicker();
+      const opts: photoAccessHelper.PhotoSelectOptions = {
+        MIMEType: photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE,
+        maxSelectNumber: 1
+      };
+      const result: photoAccessHelper.PhotoSelectResult = await pickerInstance.select(opts);
+      if (result.photoUris.length > 0) {
+        uri = result.photoUris[0];
+      }
+    } catch (err) {
+      this.showToast('取消或无法打开相册');
+      return;
+    }
+    if (uri.length === 0) {
+      this.showToast('未选择图片');
+      return;
+    }
+    deps.imageUri = uri;
+    this.appendMessage(ChatMessage.of(ChatRole.User, '识图:对所选图片做 OCR 并总结要点'));
+    await this.runAgent('拍一下这个文档,帮我总结重点');
+  }
+
+  @Builder
+  StepRow(step: AgentStep) {
+    Row() {
+      if (step.state === StepState.Running) {
+        LoadingProgress()
+          .width(16)
+          .height(16)
+          .color('#0A59F7')
+      } else if (step.state === StepState.Failed) {
+        Text('✕')
+          .fontSize(13)
+          .fontColor('#E84026')
+          .width(16)
+      } else {
+        Text('✓')
+          .fontSize(13)
+          .fontColor('#10A37F')
+          .width(16)
+      }
+      Column() {
+        Text(step.title)
+          .fontSize(13)
+          .fontColor('#1A1A1A')
+          .width('100%')
+        if (step.detail.length > 0) {
+          Text(step.detail)
+            .fontSize(11)
+            .fontColor('#8A8A8E')
+            .width('100%')
+            .margin({ top: 2 })
+        }
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+      .margin({ left: 8 })
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .padding({ top: 4, bottom: 4 })
+  }
+
+  @Builder
+  AgentPanel() {
+    Column() {
+      Row() {
+        Text(this.agentTitle)
+          .fontSize(14)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#0A59F7')
+          .layoutWeight(1)
+        if (this.agentRunning) {
+          Text('执行中…')
+            .fontSize(11)
+            .fontColor('#8A8A8E')
+        }
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .padding({ bottom: 4 })
+      ForEach(this.agentSteps, (step: AgentStep) => {
+        this.StepRow(step)
+      }, (step: AgentStep) => step.title)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .backgroundColor('#F2F6FF')
+    .borderRadius(12)
+    .padding(12)
   }
 
   build() {
@@ -137,7 +320,7 @@ struct Index {
                     .lineHeight(22)
                     .copyOption(CopyOptions.LocalDevice)
                 }
-                .constraintSize({ maxWidth: '76%' })
+                .constraintSize({ maxWidth: '88%' })
                 .backgroundColor('#FFFFFF')
                 .borderRadius(14)
                 .padding({ left: 12, right: 12, top: 8, bottom: 8 })
@@ -147,6 +330,12 @@ struct Index {
             .justifyContent(msg.role === ChatRole.User ? FlexAlign.End : FlexAlign.Start)
           }
         }, (msg: ChatMessage) => msg.id)
+
+        if (this.agentSteps.length > 0) {
+          ListItem() {
+            this.AgentPanel()
+          }
+        }
       }
       .width('100%')
       .layoutWeight(1)
@@ -160,6 +349,14 @@ struct Index {
           .onClick(() => {
             this.toggleVoice();
           })
+        Button('识图')
+          .height(44)
+          .backgroundColor('#10A37F')
+          .fontColor('#FFFFFF')
+          .enabled(!this.agentRunning)
+          .onClick(() => {
+            this.onPickAndRecognize();
+          })
         TextInput({ placeholder: this.voiceOn ? '聆听中,请说话…' : '输入消息…', text: this.inputText })
           .layoutWeight(1)
           .height(44)
@@ -170,9 +367,9 @@ struct Index {
           .onSubmit((enterKey: EnterKeyType) => {
             this.onSend();
           })
-        Button(this.loading ? '…' : '发送')
+        Button(this.loading || this.agentRunning ? '…' : '发送')
           .height(44)
-          .enabled(!this.loading)
+          .enabled(!this.loading && !this.agentRunning)
           .onClick(() => {
             this.onSend();
           })

@@ -97,9 +97,15 @@ CoreSpeech 端侧离线 ASR(中文;短语音≤60s),系统/会话热词共≤200
 - Orchestrator:规则路由(意图关键字+提示词 LLM 分类)→ 选择子 Agent → 步骤卡片流式展示;
 - 子 Agent:
   - 学习助手:知识库 RAG 问答/总结(带引用);
-  - 日程管家:从自然语言/复合指令抽取日程→日历提醒;
-  - 文档处理:拍照/文档→OCR→总结要点/入知识库;
+  - 日程管家:从自然语言/复合指令抽取日程→日历提醒(真机 CalendarKit;模拟器内存日程);
+  - 文档处理:拍照/文档→OCR→总结要点/入知识库(真机 CoreVision OCR;模拟器内置文本样例降级);
 - 升级路径:LLM function-calling 自主规划(接口已按工具调用预留)。
+
+D6 落地说明(2026-09-04):
+- 意图路由(IntentRouter):规则优先级 文档(拍照/识图)> 日程(时间+提醒词)> 学习(知识库/检索/引用);无命中→通用对话直接走 LLM
+- 新增 `agent/`:Orchestrator + LearningAgent/ScheduleAgent/DocumentAgent + ScheduleTextParser(中文时间抽取:周X/明天/下午N点等)+ 步骤回调(StepListener)
+- 新增 `provider/vision|schedule` 双实现:真机 OCR(识别像素图→文本,模拟器返回内置样例文本)、系统日历(CalendarKit addEvent,模拟器内存日程)
+- 聊天 UI:三类智能体自动路由 + 蓝色步骤面板流式展示 + 【识图】按钮(拍照/相册→OCR→总结→入知识库)
 
 ### 3.6 跨端与一多
 - 应用接续:会话上下文序列化迁移(小数据走 want 参数/大数据走分布式文件),UI 状态用 `restoreId`;
@@ -191,6 +197,12 @@ entry/src/main/ets/
   - [ ] D4.5 真机验证(导入真实文档/检索正确性/引用溯源核对;验收官按 docs/真机验收用例清单.md 第3节执行)
 - [ ] D5:真机 DataAugmentationKit 分端 RAG:PC/2in1 加工 → 产物预置 → retrieval 检索 + 自组装 RAG
 - [ ] D6:Agent 编排(Orchestrator + 学习/日程/文档 子 Agent + 复合指令)
+  - [x] D6.1 agent 层:Orchestrator/IntentRouter + 学习/日程/文档 三子 Agent + 步骤流式回调
+  - [x] D6.2 VisionProvider(CoreVision OCR 真机 / 内置样例文本模拟器降级)与 ScheduleProvider(CalendarKit 真机 / 内存模拟器)
+  - [x] D6.3 日程解析器 ScheduleTextParser(中文相对时间抽取)+ LLM JSON 兜底
+  - [x] D6.4 聊天 UI:意图自动路由 + 步骤卡片面板 + 【识图】按钮(拍照/相册→OCR→总结→入知识库)
+  - [x] D6.5 模拟器端到端回归通过(学习助手引用溯源 / 日程安排 / 识图总结 / 通用对话)
+  - [ ] D6.6 真机验证:日历写入 CalendarKit、CoreVision OCR、复合指令「拍一下…总结」完整链路
 - [ ] D7:跨端接续 + 一多布局
 - [ ] D8:指标优化 + 文档撰写
 - [ ] D9:双真机走查 + 上传物导出

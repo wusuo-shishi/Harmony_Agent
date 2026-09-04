@@ -15,6 +15,14 @@
     {
       "name": "microphone_reason",
       "value": "Voice recognition requires microphone access to convert your speech into text."
+    },
+    {
+      "name": "calendar_reason",
+      "value": "Schedule management requires calendar access to add your events and reminders."
+    },
+    {
+      "name": "photo_reason",
+      "value": "Document processing requires photo access to recognize text from your images."
     }
   ]
 }
