@@ -53,11 +53,13 @@ struct Index {
   }
 
   private registerWideMode(): void {
-    const listener = mediaquery.matchMediaSync('(width >= 840vp)');
+    // 平板/折叠等大屏设备(非 phone)且宽度≥600vp 即双栏:平板横竖屏布局一致
+    // 手机保持单栏(即使横屏宽度较大也不切双栏,避免误触/体验割裂)
+    const listener = mediaquery.matchMediaSync('(width >= 600vp)');
     this.wideListener = listener;
-    this.isWide = listener.matches;
+    this.isWide = listener.matches && CapabilityManager.isLargeScreenDevice();
     listener.on('change', (result: mediaquery.MediaQueryResult) => {
-      this.isWide = result.matches;
+      this.isWide = result.matches && CapabilityManager.isLargeScreenDevice();
     });
   }
 
@@ -161,9 +163,13 @@ struct Index {
     this.voiceOn = true;
     this.inputText = '';
     await this.asr.start((text: string): void => {
-      this.inputText = text;
+      if (this.voiceOn) {
+        this.inputText = text;
+      }
     }, (text: string): void => {
-      this.inputText = text;
+      if (this.voiceOn) {
+        this.inputText = text;
+      }
       this.voiceOn = false;
       this.asr.stop();
     }, (message: string): void => {
@@ -227,6 +233,10 @@ struct Index {
   }
 
   private async onSend(): Promise<void> {
+    if (this.voiceOn) {
+      this.voiceOn = false;
+      await this.asr.stop();
+    }
     const text: string = this.inputText.trim();
     if (text.length === 0 || this.loading || this.agentRunning) {
       return;

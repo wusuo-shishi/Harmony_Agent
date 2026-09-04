@@ -78,6 +78,20 @@ export class KnowledgeStore {
     return '';
   }
 
+  getContent(docId: string): string {
+    const content: string | undefined = this.contentById.get(docId);
+    return content ?? '';
+  }
+
+  hasSampleTitle(title: string): boolean {
+    for (let i = 0; i < this.docs.length; i++) {
+      if (this.docs[i].source === DocSource.Sample && this.docs[i].title === title) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private sourceOf(raw: string): DocSource {
     if (raw === 'sample') {
       return DocSource.Sample;
@@ -167,18 +181,27 @@ export class KnowledgeStore {
     return decoder.decodeToString(data);
   }
 
-  private async readSample(info: SampleFileInfo): Promise<void> {
+  private async readSample(info: SampleFileInfo): Promise<boolean> {
     if (this.ctx === undefined) {
-      return;
+      return false;
+    }
+    if (this.hasSampleTitle(info.title)) {
+      return false;
     }
     const data: Uint8Array = await this.ctx.resourceManager.getRawFileContent(info.rawPath);
     this.addDoc(info.title, DocSource.Sample, this.decodeText(data));
+    return true;
   }
 
-  async seedSamples(): Promise<void> {
+  async seedSamples(): Promise<number> {
+    let added: number = 0;
     for (let i = 0; i < this.sampleFiles.length; i++) {
-      await this.readSample(this.sampleFiles[i]);
+      const ok: boolean = await this.readSample(this.sampleFiles[i]);
+      if (ok) {
+        added++;
+      }
     }
+    return added;
   }
 
   async importFromUri(uri: string, title: string): Promise<KnowledgeDoc> {

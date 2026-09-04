@@ -9,6 +9,10 @@ export class CapabilityManager {
     return deviceInfo.deviceType;
   }
 
+  static isLargeScreenDevice(): boolean {
+    return deviceInfo.deviceType !== 'phone';
+  }
+
   static supportsDataAugmentationKit(): boolean {
     return !CapabilityManager.isEmulator();
   }

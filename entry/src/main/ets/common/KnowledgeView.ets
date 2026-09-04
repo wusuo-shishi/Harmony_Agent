@@ -16,6 +16,9 @@ export struct KnowledgeView {
   @State searching: boolean = false;
   @State importing: boolean = false;
   @State tip: string = '';
+  @State previewTitle: string = '';
+  @State previewContent: string = '';
+  @State previewVisible: boolean = false;
   @Prop embedded: boolean = false;
   private store: KnowledgeStore = KnowledgeStore.shared;
 
@@ -167,9 +170,13 @@ export struct KnowledgeView {
     }
     this.importing = true;
     try {
-      await this.store.seedSamples();
+      const added: number = await this.store.seedSamples();
       this.docs = this.store.listDocs();
-      this.showToast('已恢复示例文档');
+      if (added === 0) {
+        this.showToast('示例文档已存在,无需重复恢复');
+      } else {
+        this.showToast(`已恢复 ${added} 篇示例文档`);
+      }
     } catch (err) {
       this.showToast('恢复示例失败');
     } finally {
@@ -216,6 +223,17 @@ export struct KnowledgeView {
     .padding(12)
   }
 
+  private openPreview(doc: KnowledgeDoc): void {
+    this.previewTitle = doc.title;
+    const content: string = this.store.getContent(doc.id);
+    this.previewContent = content.length > 0 ? content : '(该文档内容为空)';
+    this.previewVisible = true;
+  }
+
+  private closePreview(): void {
+    this.previewVisible = false;
+  }
+
   @Builder
   DocRow(doc: KnowledgeDoc) {
     Row() {
@@ -259,11 +277,15 @@ export struct KnowledgeView {
     .backgroundColor('#FFFFFF')
     .borderRadius(12)
     .padding({ left: 12, right: 4, top: 10, bottom: 10 })
+    .onClick(() => {
+      this.openPreview(doc);
+    })
   }
 
   build() {
-    Column() {
-      if (!this.embedded) {
+    Stack({ alignContent: Alignment.Top }) {
+      Column() {
+        if (!this.embedded) {
         Row() {
           Text('知识库')
             .fontSize(18)
@@ -414,9 +436,60 @@ export struct KnowledgeView {
       .width('100%')
       .padding({ left: 12, right: 12, top: 8, bottom: 12 })
       .backgroundColor('#F1F3F5')
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor('#F1F3F5')
+
+      if (this.previewVisible) {
+        Column() {
+          Column() {
+            Row() {
+              Text(this.previewTitle)
+                .fontSize(16)
+                .fontWeight(FontWeight.Bold)
+                .fontColor('#1A1A1A')
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .layoutWeight(1)
+              Text('关闭')
+                .fontSize(13)
+                .fontColor('#0A59F7')
+                .padding({ left: 12, top: 4, bottom: 4 })
+                .onClick(() => {
+                  this.closePreview();
+                })
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+            .padding({ bottom: 8 })
+
+            Scroll() {
+              Text(this.previewContent)
+                .fontSize(14)
+                .fontColor('#333336')
+                .lineHeight(22)
+                .width('100%')
+                .copyOption(CopyOptions.LocalDevice)
+            }
+            .width('100%')
+            .layoutWeight(1)
+            .align(Alignment.TopStart)
+          }
+          .width('92%')
+          .height('78%')
+          .backgroundColor('#FFFFFF')
+          .borderRadius(16)
+          .padding(16)
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor('#80000000')
+      }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F1F3F5')
   }
 }
