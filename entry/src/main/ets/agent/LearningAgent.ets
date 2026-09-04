@@ -5,11 +5,13 @@ import { ChatMessage, ChatRole } from '../model/ChatModels';
 import { RetrievalConfig } from '../provider/retrieval/RetrievalConfig';
 import { AgentKind, AgentRunResult, AgentStep, StepState } from './AgentModels';
 import { StepListener } from './StepListener';
+import { ChatDeltaHandler } from '../provider/llm/LLMProvider';
 
 export class LearningAgent {
   readonly agentName: string = '学习助手';
 
-  async run(query: string, llm: LLMProvider, retrieval: RetrievalProvider, onStep: StepListener): Promise<AgentRunResult> {
+  async run(query: string, llm: LLMProvider, retrieval: RetrievalProvider, onStep: StepListener,
+    onDelta?: ChatDeltaHandler): Promise<AgentRunResult> {
     const steps: AgentStep[] = [];
     steps.push(AgentStep.of('1. 解析问题(意图:知识库问答)'));
     onStep(steps);
@@ -23,11 +25,11 @@ export class LearningAgent {
     } catch (err) {
       hits = [];
     }
-    return await this.answerWithHitsInto(query, llm, hits, steps, onStep);
+    return await this.answerWithHitsInto(query, llm, hits, steps, onStep, onDelta);
   }
 
   async answerWithHitsInto(query: string, llm: LLMProvider, hits: RetrievalHit[], steps: AgentStep[],
-    onStep: StepListener): Promise<AgentRunResult> {
+    onStep: StepListener, onDelta?: ChatDeltaHandler): Promise<AgentRunResult> {
     const result: AgentRunResult = new AgentRunResult();
     result.kind = AgentKind.Learning;
     result.agentName = this.agentName;
@@ -42,7 +44,9 @@ export class LearningAgent {
     const messages: ChatMessage[] = [ChatMessage.of(ChatRole.User, prompt)];
     let answer: string = '';
     try {
-      answer = await llm.chat(messages);
+      answer = await llm.streamChat(messages, (delta: string): void => {
+        onDelta?.(delta);
+      });
     } catch (err) {
       answer = '抱歉,大模型调用失败。';
     }

@@ -3,6 +3,7 @@ import { StepListener } from './StepListener';
 import { VisionProvider } from '../provider/vision/VisionProvider';
 import { SampleVisionProvider } from '../provider/vision/SampleVisionProvider';
 import { LLMProvider } from '../provider/llm/LLMProvider';
+import { ChatDeltaHandler } from '../provider/llm/LLMProvider';
 import { ChatMessage, ChatRole } from '../model/ChatModels';
 import { KnowledgeStore } from '../knowledge/KnowledgeStore';
 
@@ -10,7 +11,7 @@ export class DocumentAgent {
   readonly agentName: string = '文档处理';
 
   async run(query: string, llm: LLMProvider, vision: VisionProvider | undefined, imageUri: string | undefined,
-    store: KnowledgeStore, onStep: StepListener): Promise<AgentRunResult> {
+    store: KnowledgeStore, onStep: StepListener, onDelta?: ChatDeltaHandler): Promise<AgentRunResult> {
     const result: AgentRunResult = new AgentRunResult();
     result.kind = AgentKind.Document;
     result.agentName = this.agentName;
@@ -49,7 +50,9 @@ export class DocumentAgent {
     const messages: ChatMessage[] = [ChatMessage.of(ChatRole.User, prompt)];
     let summary: string = '';
     try {
-      summary = await llm.chat(messages);
+      summary = await llm.streamChat(messages, (delta: string): void => {
+        onDelta?.(delta);
+      });
     } catch (err) {
       summary = '(大模型总结失败,以下为识别原文片段)\n' + truncate(text, 300);
     }

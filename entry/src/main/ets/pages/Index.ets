@@ -28,6 +28,8 @@ struct Index {
   @State isWide: boolean = false;
   private wideListener: mediaquery.MediaQueryListener | undefined = undefined;
   @State agentSteps: AgentStep[] = [];
+  @State streamingText: string = '';
+  @State streamingVisible: boolean = false;
   private scroller: Scroller = new Scroller();
   private maxHistory: number = 20;
   private asr: AsrService = new AsrService();
@@ -98,6 +100,7 @@ struct Index {
     this.messages = next;
     this.scrollToBottom();
   }
+
 
   private scrollToBottom(): void {
     const index: number = this.messages.length - 1;
@@ -206,20 +209,33 @@ struct Index {
     this.agentRunning = true;
     this.agentTitle = '智能体处理中…';
     this.agentSteps = [AgentStep.of('识别意图…')];
+    this.streamingText = '';
+    this.streamingVisible = false;
     this.scrollToBottom();
     try {
       const result: AgentRunResult = await this.orchestrator.execute(text, deps, (steps: AgentStep[]): void => {
         this.renderSteps(steps);
+        this.scrollToBottom();
+      }, (delta: string): void => {
+        if (delta.length === 0) {
+          return;
+        }
+        this.streamingText += delta;
+        this.streamingVisible = true;
         this.scrollToBottom();
       });
       this.agentTitle = this.agentNameOf(result.kind);
       if (result.answer.trim().length > 0) {
         this.appendMessage(ChatMessage.of(ChatRole.Assistant, result.answer));
       }
+      this.streamingText = '';
+      this.streamingVisible = false;
       this.agentSteps = [];
     } catch (err) {
       this.agentSteps = [];
       this.appendMessage(ChatMessage.of(ChatRole.Assistant, '智能体执行失败,请稍后重试。'));
+      this.streamingText = '';
+      this.streamingVisible = false;
     } finally {
       this.agentRunning = false;
       this.agentTitle = '';
@@ -408,6 +424,22 @@ struct Index {
         if (this.agentSteps.length > 0) {
           ListItem() {
             this.AgentPanel()
+          }
+        }
+
+        if (this.streamingVisible && this.streamingText.length > 0) {
+          ListItem() {
+            Row() {
+              Text(this.streamingText)
+                .fontSize(16)
+                .fontColor('#1A1A1A')
+                .lineHeight(22)
+                .copyOption(CopyOptions.LocalDevice)
+            }
+            .constraintSize({ maxWidth: '88%' })
+            .backgroundColor('#FFFFFF')
+            .borderRadius(14)
+            .padding({ left: 12, right: 12, top: 8, bottom: 8 })
           }
         }
       }

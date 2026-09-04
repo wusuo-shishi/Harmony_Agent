@@ -1,6 +1,7 @@
 import { http } from '@kit.NetworkKit';
+import { util } from '@kit.ArkTS';
 import { ChatMessage, ChatRole } from '../../model/ChatModels';
-import { LLMProvider } from './LLMProvider';
+import { LLMProvider, ChatDeltaHandler } from './LLMProvider';
 
 interface RequestMessage {
   role: string;
@@ -23,6 +24,18 @@ interface ChatChoice {
 
 interface ChatResponse {
   choices: ChatChoice[];
+}
+
+interface StreamDelta {
+  content?: string;
+}
+
+interface StreamChoice {
+  delta?: StreamDelta;
+}
+
+interface StreamChunk {
+  choices?: StreamChoice[];
 }
 
 export class DeepSeekLlmProvider implements LLMProvider {
@@ -53,10 +66,12 @@ export class DeepSeekLlmProvider implements LLMProvider {
     return 'assistant';
   }
 
-  async chat(messages: ChatMessage[]): Promise<string> {
-    if (this.apiKey.length === 0) {
-      throw new Error('DeepSeek 未配置 API Key,请在 LlmConfig.ets 中填写。');
-    }
+  private buildUrl(): string {
+    return this.baseUrl.endsWith('/chat/completions') ?
+      this.baseUrl : `${this.baseUrl}/chat/completions`;
+  }
+
+  private buildRequest(messages: ChatMessage[], stream: boolean): http.HttpRequestOptions {
     const reqMessages: RequestMessage[] = [];
     for (const item of messages) {
       const reqMsg: RequestMessage = { role: this.toRole(item.role), content: item.content };
@@ -65,11 +80,9 @@ export class DeepSeekLlmProvider implements LLMProvider {
     const payload: RequestPayload = {
       model: this.model,
       messages: reqMessages,
-      stream: false
+      stream: stream
     };
-    const url: string = this.baseUrl.endsWith('/chat/completions') ?
-      this.baseUrl : `${this.baseUrl}/chat/completions`;
-    const requestOptions: http.HttpRequestOptions = {
+    return {
       method: http.RequestMethod.POST,
       header: {
         'Content-Type': 'application/json',
@@ -77,11 +90,18 @@ export class DeepSeekLlmProvider implements LLMProvider {
       },
       extraData: JSON.stringify(payload),
       connectTimeout: 10000,
-      readTimeout: 30000
+      readTimeout: 60000
     };
+  }
+
+  async chat(messages: ChatMessage[]): Promise<string> {
+    if (this.apiKey.length === 0) {
+      throw new Error('DeepSeek 未配置 API Key,请在 LlmConfig.ets 中填写。');
+    }
+    const requestOptions: http.HttpRequestOptions = this.buildRequest(messages, false);
     const httpRequest = http.createHttp();
     try {
-      const response = await httpRequest.request(url, requestOptions);
+      const response = await httpRequest.request(this.buildUrl(), requestOptions);
       if (response.responseCode !== 200) {
         throw new Error(`DeepSeek 请求失败,HTTP ${response.responseCode}`);
       }
@@ -99,5 +119,86 @@ export class DeepSeekLlmProvider implements LLMProvider {
       } catch (err) {
       }
     }
+  }
+
+  async streamChat(messages: ChatMessage[], onDelta: ChatDeltaHandler): Promise<string> {
+    if (this.apiKey.length === 0) {
+      throw new Error('DeepSeek 未配置 API Key,请在 LlmConfig.ets 中填写。');
+    }
+    const requestOptions: http.HttpRequestOptions = this.buildRequest(messages, true);
+    const httpRequest = http.createHttp();
+    const decoder = new util.TextDecoder('utf-8');
+    let buffer: string = '';
+    let fullText: string = '';
+    let finished: boolean = false;
+
+    return new Promise<string>((resolve: (value: string) => void, reject: (reason: Object) => void) => {
+      const dispatch = (): void => {
+        while (true) {
+          const nl: number = buffer.indexOf('\n');
+          if (nl < 0) {
+            break;
+          }
+          const line: string = buffer.substring(0, nl).trim();
+          buffer = buffer.substring(nl + 1);
+          if (line.length === 0) {
+            continue;
+          }
+          if (!line.startsWith('data:')) {
+            continue;
+          }
+          const data: string = line.substring(5).trim();
+          if (data === '[DONE]') {
+            finished = true;
+            return;
+          }
+          try {
+            const chunk = JSON.parse(data) as StreamChunk;
+            if (chunk.choices !== undefined && chunk.choices.length > 0) {
+              const delta: StreamDelta | undefined = chunk.choices[0].delta;
+              const content: string | undefined = delta?.content;
+              if (content !== undefined && content.length > 0) {
+                fullText += content;
+                onDelta(content);
+              }
+            }
+          } catch (err) {
+          }
+        }
+      };
+
+      httpRequest.on('dataReceive', (data: ArrayBuffer): void => {
+        if (finished) {
+          return;
+        }
+        buffer += decoder.decodeToString(new Uint8Array(data));
+        dispatch();
+        if (finished) {
+          resolve(fullText);
+        }
+      });
+      httpRequest.on('dataEnd', (): void => {
+        if (!finished) {
+          finished = true;
+          dispatch();
+        }
+        try {
+          httpRequest.off('dataReceive');
+          httpRequest.off('dataEnd');
+        } catch (err) {
+        }
+        resolve(fullText);
+      });
+
+      httpRequest.requestInStream(this.buildUrl(), requestOptions).then((code: number) => {
+        if (code !== 200) {
+          finished = true;
+          reject(new Error(`DeepSeek 流式请求失败,HTTP ${code}`));
+        }
+      }).catch((err: Object) => {
+        finished = true;
+        reject(new Error(`DeepSeek 流式调用失败:${JSON.stringify(err)}`));
+      });
+    });
   }
 }

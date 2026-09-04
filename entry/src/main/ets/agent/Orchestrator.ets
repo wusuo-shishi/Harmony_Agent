@@ -1,5 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { LLMProvider } from '../provider/llm/LLMProvider';
+import { ChatDeltaHandler } from '../provider/llm/LLMProvider';
 import { RetrievalProvider } from '../provider/retrieval/RetrievalProvider';
 import { ScheduleProvider } from '../provider/schedule/ScheduleProvider';
 import { VisionProvider } from '../provider/vision/VisionProvider';
@@ -43,10 +44,11 @@ export class Orchestrator {
   private readonly scheduleAgent: ScheduleAgent = new ScheduleAgent();
   private readonly document: DocumentAgent = new DocumentAgent();
 
-  async execute(text: string, deps: AgentDeps, onStep: StepListener): Promise<AgentRunResult> {
+  async execute(text: string, deps: AgentDeps, onStep: StepListener,
+    onDelta?: ChatDeltaHandler): Promise<AgentRunResult> {
     const intent: IntentResult = IntentRouter.route(text);
     if (intent.kind === AgentKind.Learning) {
-      return await this.learning.run(text, deps.llm, deps.retrieval, onStep);
+      return await this.learning.run(text, deps.llm, deps.retrieval, onStep, onDelta);
     }
     if (intent.kind === AgentKind.Schedule) {
       this.prepareScheduleProvider(deps);
@@ -68,7 +70,7 @@ export class Orchestrator {
             steps[steps.length - 1].state = StepState.Done;
             steps[steps.length - 1].detail = '已获取图片,开始 OCR';
             onStep(steps);
-            return await this.document.run(text, deps.llm, deps.vision, deps.imageUri, deps.store, onStep);
+            return await this.document.run(text, deps.llm, deps.vision, deps.imageUri, deps.store, onStep, onDelta);
           }
         } catch (err) {
         }
@@ -80,7 +82,7 @@ export class Orchestrator {
         onStep(steps);
         return cancelled;
       }
-      return await this.document.run(text, deps.llm, deps.vision, deps.imageUri, deps.store, onStep);
+      return await this.document.run(text, deps.llm, deps.vision, deps.imageUri, deps.store, onStep, onDelta);
     }
     // General(无明确操作意图):先探测知识库,命中则给带引用回答;未命中才纯通用对话
     let probeHits: RetrievalHit[] = [];
@@ -95,14 +97,16 @@ export class Orchestrator {
       onStep(steps);
       steps.push(AgentStep.of('2. 检索知识库(命中,进入知识问答)'));
       onStep(steps);
-      return await this.learning.answerWithHitsInto(text, deps.llm, probeHits, steps, onStep);
+      return await this.learning.answerWithHitsInto(text, deps.llm, probeHits, steps, onStep, onDelta);
     }
     const result: AgentRunResult = new AgentRunResult();
     result.kind = AgentKind.General;
     result.agentName = '通用对话';
     const history: ChatMessage[] = [ChatMessage.of(ChatRole.User, text)];
     try {
-      result.answer = await deps.llm.chat(history);
+      result.answer = await deps.llm.streamChat(history, (delta: string): void => {
+        onDelta?.(delta);
+      });
     } catch (err) {
       result.answer = '抱歉,获取回复失败,请稍后重试。';
     }
