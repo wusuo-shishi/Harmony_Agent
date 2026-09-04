@@ -4,6 +4,7 @@ interface ChatMsgWire {
   role: string;
   content: string;
   ts: number;
+  uris?: string[];
 }
 
 export class SessionCodec {
@@ -12,6 +13,9 @@ export class SessionCodec {
     for (let i = 0; i < messages.length; i++) {
       const m: ChatMessage = messages[i];
       const w: ChatMsgWire = { role: m.role, content: m.content, ts: m.timestamp };
+      if (m.imageUris.length > 0) {
+        w.uris = m.imageUris;
+      }
       wires.push(w);
     }
     return JSON.stringify(wires);
@@ -31,7 +35,7 @@ export class SessionCodec {
     for (let i = 0; i < wires.length; i++) {
       const w: ChatMsgWire = wires[i];
       const msg: ChatMessage = SessionCodec.wireToMessage(w);
-      if (msg.content.length > 0) {
+      if (msg.content.length > 0 || msg.imageUris.length > 0) {
         out.push(msg);
       }
     }
@@ -54,6 +58,9 @@ export class SessionCodec {
     msg.content = w.content;
     msg.timestamp = w.ts;
     msg.id = `${w.ts}_restored`;
+    if (w.uris !== undefined && w.uris.length > 0) {
+      msg.imageUris = w.uris;
+    }
     return msg;
   }
 }

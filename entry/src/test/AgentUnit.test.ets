@@ -287,5 +287,14 @@ export default function agentUnitTest() {
     it('badJson_returnsEmpty', 0, () => {
       expect(SessionCodec.decode('not-json{').length).assertEqual(0);
     });
+
+    it('roundTrip_preservesImageUris', 0, () => {
+      const msgs: ChatMessage[] = [ChatMessage.ofImages(ChatRole.User, '看图', ['file://a.png', 'file://b.png'])];
+      const json: string = SessionCodec.encode(msgs);
+      const restored: ChatMessage[] = SessionCodec.decode(json);
+      expect(restored.length).assertEqual(1);
+      expect(restored[0].imageUris.length).assertEqual(2);
+      expect(restored[0].imageUris[1]).assertEqual('file://b.png');
+    });
   });
 }

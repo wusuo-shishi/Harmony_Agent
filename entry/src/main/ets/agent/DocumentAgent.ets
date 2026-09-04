@@ -11,7 +11,8 @@ export class DocumentAgent {
   readonly agentName: string = '文档处理';
 
   async run(query: string, llm: LLMProvider, vision: VisionProvider | undefined, imageUri: string | undefined,
-    store: KnowledgeStore, onStep: StepListener, onDelta?: ChatDeltaHandler): Promise<AgentRunResult> {
+    store: KnowledgeStore, onStep: StepListener, onDelta?: ChatDeltaHandler,
+    imageUris?: string[]): Promise<AgentRunResult> {
     const result: AgentRunResult = new AgentRunResult();
     result.kind = AgentKind.Document;
     result.agentName = this.agentName;
@@ -21,11 +22,27 @@ export class DocumentAgent {
     await delay(200);
 
     const provider: VisionProvider = vision ?? new SampleVisionProvider();
-    steps.push(AgentStep.of(`2. OCR 识别文字(${provider.providerName})`));
+    // 多图列表优先;否则回退单图
+    const uris: string[] = (imageUris !== undefined && imageUris.length > 0) ? imageUris :
+      (imageUri !== undefined && imageUri.length > 0) ? [imageUri] : [];
+    const label: string = uris.length > 1 ? `${provider.providerName} ×${uris.length}` : provider.providerName;
+    steps.push(AgentStep.of(`2. OCR 识别文字(${label})`));
     onStep(steps);
     let text: string = '';
     try {
-      text = await provider.recognizeImageUri(imageUri ?? '');
+      if (uris.length === 0) {
+        // 无真实图片(模拟器降级):provider 返回内置样例
+        text = await provider.recognizeImageUri('');
+      } else {
+        const parts: string[] = [];
+        for (let i = 0; i < uris.length; i++) {
+          const one: string = await provider.recognizeImageUri(uris[i]);
+          if (one.trim().length > 0) {
+            parts.push(one.trim());
+          }
+        }
+        text = parts.join('\n');
+      }
       steps[steps.length - 1].state = StepState.Done;
       steps[steps.length - 1].detail = text.length > 0 ? `识别出 ${text.length} 字` : '识别结果为空';
     } catch (err) {

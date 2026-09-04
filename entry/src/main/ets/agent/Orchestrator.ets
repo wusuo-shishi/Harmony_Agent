@@ -33,6 +33,7 @@ export class AgentDeps {
   store: KnowledgeStore;
   uiContext: common.UIAbilityContext | undefined = undefined;
   imageUri: string = '';
+  imageUris: string[] = [];
   requestImage: (() => Promise<string>) | undefined = undefined;
 
   constructor(llm: LLMProvider, retrieval: RetrievalProvider, store: KnowledgeStore) {
@@ -166,7 +167,7 @@ export class Orchestrator {
       const hint: string = AgentTools.readStringArg(argsJson, 'hint');
       this.prepareVisionProvider(deps);
       const sub = await this.document.run(hint.length > 0 ? hint : originText, deps.llm, deps.vision,
-        deps.imageUri, deps.store, onStep, onDelta);
+        deps.imageUri, deps.store, onStep, onDelta, deps.imageUris);
       return sub.answer;
     }
     if (name === 'create_schedule') {
@@ -197,7 +198,8 @@ export class Orchestrator {
           steps[steps.length - 1].state = StepState.Done;
           steps[steps.length - 1].detail = '已获取图片,开始 OCR';
           onStep(steps);
-          return await this.document.run(text, deps.llm, deps.vision, deps.imageUri, deps.store, onStep, onDelta);
+          return await this.document.run(text, deps.llm, deps.vision, deps.imageUri, deps.store, onStep, onDelta,
+            deps.imageUris);
         }
       } catch (err) {
       }
@@ -209,7 +211,8 @@ export class Orchestrator {
       onStep(steps);
       return cancelled;
     }
-    return await this.document.run(text, deps.llm, deps.vision, deps.imageUri, deps.store, onStep, onDelta);
+    return await this.document.run(text, deps.llm, deps.vision, deps.imageUri, deps.store, onStep, onDelta,
+      deps.imageUris);
   }
 
   private async executeChain(plan: ChainPlan, text: string, deps: AgentDeps, onStep: StepListener,
@@ -260,7 +263,7 @@ export class Orchestrator {
         allSteps.push(stepHead);
         onStep(allSteps);
         sub = await this.document.run(carry.length > 0 ? carry : text, deps.llm, deps.vision, deps.imageUri,
-          deps.store, onStep, onDelta);
+          deps.store, onStep, onDelta, deps.imageUris);
         if (sub.payload.length === 0) {
           sub.payload = sub.answer;
         }

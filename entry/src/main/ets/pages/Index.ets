@@ -31,6 +31,7 @@ struct Index {
   @State agentSteps: AgentStep[] = [];
   @State streamingText: string = '';
   @State streamingVisible: boolean = false;
+  @State pendingImages: string[] = [];
   private scroller: Scroller = new Scroller();
   private maxHistory: number = 20;
   private asr: AsrService = new AsrService();
@@ -308,12 +309,28 @@ struct Index {
       await this.asr.stop();
     }
     const text: string = this.inputText.trim();
-    if (text.length === 0 || this.loading || this.agentRunning) {
+    const hasImages: boolean = this.pendingImages.length > 0;
+    if ((text.length === 0 && !hasImages) || this.loading || this.agentRunning) {
       return;
     }
     this.inputText = '';
-    this.appendMessage(ChatMessage.of(ChatRole.User, text));
-    await this.runAgent(text);
+    if (this.agentDeps !== undefined) {
+      this.agentDeps.imageUri = hasImages ? this.pendingImages[0] : '';
+      this.agentDeps.imageUris = this.pendingImages.slice();
+    } else {
+      const deps = this.ensureAgentDeps();
+      deps.imageUri = hasImages ? this.pendingImages[0] : '';
+      deps.imageUris = this.pendingImages.slice();
+    }
+    const content: string = text.length > 0 ? text : (hasImages ? '识别图片并总结要点' : '');
+    if (hasImages) {
+      this.appendMessage(ChatMessage.ofImages(ChatRole.User, content, this.pendingImages));
+    } else {
+      this.appendMessage(ChatMessage.of(ChatRole.User, content));
+    }
+    const instruction: string = text.length > 0 ? text : '拍一下这个文档,帮我总结重点';
+    this.pendingImages = [];
+    await this.runAgent(instruction);
   }
 
   private async pickPhoto(): Promise<string> {
@@ -335,29 +352,43 @@ struct Index {
     return '';
   }
 
-  private async onPickAndRecognize(): Promise<void> {
+  private async pickImages(): Promise<void> {
     if (this.agentRunning || this.loading) {
       return;
     }
-    if (this.agentDeps !== undefined) {
-      this.agentDeps.imageUri = '';
-    }
-    const deps: AgentDeps = this.ensureAgentDeps();
-    let uri: string = '';
     if (CapabilityManager.isEmulator()) {
-      // 模拟器无相机/OCR:使用内置示例文本走完整流程
-      this.appendMessage(ChatMessage.of(ChatRole.User, '识图:拍一下这个文档,帮我总结重点'));
-      await this.runAgent('拍一下这个文档,帮我总结重点');
+      // 模拟器无真实相册/OCR:用占位图,发送走内置样例文本
+      this.appendPending('sample://demo_1');
       return;
     }
-    uri = await this.pickPhoto();
-    if (uri.length === 0) {
-      this.showToast('未选择图片');
-      return;
+    try {
+      const pickerInstance = new photoAccessHelper.PhotoViewPicker();
+      const opts: photoAccessHelper.PhotoSelectOptions = {
+        MIMEType: photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE,
+        maxSelectNumber: 9 - this.pendingImages.length
+      };
+      const result: photoAccessHelper.PhotoSelectResult = await pickerInstance.select(opts);
+      for (let i = 0; i < result.photoUris.length; i++) {
+        this.appendPending(result.photoUris[i]);
+      }
+    } catch (err) {
+      this.showToast('取消或无法打开相册');
     }
-    deps.imageUri = uri;
-    this.appendMessage(ChatMessage.of(ChatRole.User, '识图:对所选图片做 OCR 并总结要点'));
-    await this.runAgent('拍一下这个文档,帮我总结重点');
+  }
+
+  private appendPending(uri: string): void {
+    const next: string[] = this.pendingImages.concat(uri);
+    this.pendingImages = next;
+  }
+
+  private removePending(index: number): void {
+    const next: string[] = [];
+    for (let i = 0; i < this.pendingImages.length; i++) {
+      if (i !== index) {
+        next.push(this.pendingImages[i]);
+      }
+    }
+    this.pendingImages = next;
   }
 
   @Builder
@@ -431,37 +462,61 @@ struct Index {
   }
 
   @Builder
+  MessageBubble(msg: ChatMessage) {
+    Column() {
+      if (msg.content.length > 0) {
+        Text(msg.content)
+          .fontSize(16)
+          .fontColor(msg.role === ChatRole.User ? '#FFFFFF' : '#1A1A1A')
+          .lineHeight(22)
+          .copyOption(CopyOptions.LocalDevice)
+          .width('100%')
+      }
+      if (msg.imageUris.length > 0) {
+        Scroll() {
+          Row({ space: 6 }) {
+            ForEach(msg.imageUris, (uri: string) => {
+              if (uri.startsWith('sample://')) {
+                Column() {
+                  Text('[图片]')
+                    .fontSize(13)
+                    .fontColor('#666666')
+                }
+                .width(120)
+                .height(90)
+                .justifyContent(FlexAlign.Center)
+                .backgroundColor('#EEF0F3')
+                .borderRadius(8)
+              } else {
+                Image(uri)
+                  .width(120)
+                  .height(90)
+                  .objectFit(ImageFit.Cover)
+                  .borderRadius(8)
+              }
+            }, (uri: string) => uri)
+          }
+        }
+        .scrollable(ScrollDirection.Horizontal)
+        .width('100%')
+        .margin({ top: msg.content.length > 0 ? 6 : 0 })
+      }
+    }
+    .alignItems(HorizontalAlign.Start)
+    .constraintSize({ maxWidth: msg.role === ChatRole.User ? '76%' : '88%' })
+    .backgroundColor(msg.role === ChatRole.User ? '#0A59F7' : '#FFFFFF')
+    .borderRadius(14)
+    .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+  }
+
+  @Builder
   ChatColumn() {
     Column() {
       List({ space: 8, scroller: this.scroller }) {
         ForEach(this.messages, (msg: ChatMessage) => {
           ListItem() {
             Row() {
-              if (msg.role === ChatRole.User) {
-                Row() {
-                  Text(msg.content)
-                    .fontSize(16)
-                    .fontColor('#FFFFFF')
-                    .lineHeight(22)
-                    .copyOption(CopyOptions.LocalDevice)
-                }
-                .constraintSize({ maxWidth: '76%' })
-                .backgroundColor('#0A59F7')
-                .borderRadius(14)
-                .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-              } else {
-                Row() {
-                  Text(msg.content)
-                    .fontSize(16)
-                    .fontColor('#1A1A1A')
-                    .lineHeight(22)
-                    .copyOption(CopyOptions.LocalDevice)
-                }
-                .constraintSize({ maxWidth: '88%' })
-                .backgroundColor('#FFFFFF')
-                .borderRadius(14)
-                .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-              }
+              this.MessageBubble(msg)
             }
             .width('100%')
             .justifyContent(msg.role === ChatRole.User ? FlexAlign.End : FlexAlign.Start)
@@ -494,6 +549,61 @@ struct Index {
       .layoutWeight(1)
       .padding({ left: 12, right: 12, top: 8, bottom: 8 })
 
+      if (this.pendingImages.length > 0) {
+        Column() {
+          Scroll() {
+            Row({ space: 6 }) {
+              ForEach(this.pendingImages, (uri: string, idx: number) => {
+                Stack({ alignContent: Alignment.TopEnd }) {
+                  if (uri.startsWith('sample://')) {
+                    Column() {
+                      Text('[图片]')
+                        .fontSize(13)
+                        .fontColor('#666666')
+                    }
+                    .width(64)
+                    .height(64)
+                    .justifyContent(FlexAlign.Center)
+                    .backgroundColor('#E2E6EC')
+                    .borderRadius(8)
+                  } else {
+                    Image(uri)
+                      .width(64)
+                      .height(64)
+                      .objectFit(ImageFit.Cover)
+                      .borderRadius(8)
+                  }
+                  Text('×')
+                    .fontSize(13)
+                    .fontColor('#FFFFFF')
+                    .width(18)
+                    .height(18)
+                    .textAlign(TextAlign.Center)
+                    .backgroundColor('#80000000')
+                    .borderRadius(9)
+                    .onClick(() => {
+                      this.removePending(idx);
+                    })
+                }
+                .width(64)
+                .height(64)
+              }, (uri: string, idx: number) => `${uri}_${idx}`)
+            }
+          }
+          .scrollable(ScrollDirection.Horizontal)
+          .width('100%')
+
+          Text('已选 ' + this.pendingImages.length + ' 张,可继续输入文字后一并发送')
+            .fontSize(11)
+            .fontColor('#8A8A8E')
+            .width('100%')
+            .margin({ top: 4 })
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 6, bottom: 2 })
+        .backgroundColor('#F7F8FA')
+      }
+
       Row({ space: 8 }) {
         Button(this.voiceOn ? '停止' : '语音')
           .height(44)
@@ -502,13 +612,13 @@ struct Index {
           .onClick(() => {
             this.toggleVoice();
           })
-        Button('识图')
+        Button('图片')
           .height(44)
           .backgroundColor('#10A37F')
           .fontColor('#FFFFFF')
           .enabled(!this.agentRunning)
           .onClick(() => {
-            this.onPickAndRecognize();
+            this.pickImages();
           })
         TextInput({ placeholder: this.voiceOn ? '聆听中,请说话…' : '输入消息…', text: this.inputText })
           .layoutWeight(1)

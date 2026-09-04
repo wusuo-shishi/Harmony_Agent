@@ -9,6 +9,7 @@ export class ChatMessage {
   role: ChatRole = ChatRole.User;
   content: string = '';
   timestamp: number = 0;
+  imageUris: string[] = [];
 
   static of(role: ChatRole, content: string): ChatMessage {
     const msg = new ChatMessage();
@@ -16,6 +17,12 @@ export class ChatMessage {
     msg.role = role;
     msg.content = content;
     msg.timestamp = Date.now();
+    return msg;
+  }
+
+  static ofImages(role: ChatRole, content: string, uris: string[]): ChatMessage {
+    const msg = ChatMessage.of(role, content);
+    msg.imageUris = uris;
     return msg;
   }
 }
