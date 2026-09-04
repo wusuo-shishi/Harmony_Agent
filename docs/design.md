@@ -18,7 +18,7 @@
 | 命题要求 | 本方案 |
 | --- | --- |
 | 1 多模态交互(语音/文本/图像,复合指令) | 统一输入条:CoreSpeech 语音(热词)、文本、拍照/相册;Orchestrator 将复合指令拆解为意图+槽位 |
-| 2 端侧 RAG 知识库(离线语义检索问答) | DataAugmentationKit:知识加工 + 智慧化数据检索(AIP)+ 自组装"分解→改写→召回→LLM 生成"RAG 管线;手机/平板不提供 rag API,故自组装(设计亮点);结果带引用溯源 |
+| 2 端侧 RAG 知识库(离线语义检索问答) | DataAugmentationKit 全链路、按官方设备约束分端落地:PC/2in1 用 knowledgeProcessor 知识加工(官方:加工仅 PC/2in1)→ 产物(倒排库+向量库)随应用预置到手机/平板;手机/平板用智慧化数据检索 retrieval(官方:Phone/Tablet 支持)召回+重排 → 自组装"检索→LLM 生成"RAG 问答,带引用溯源;完整官方 rag API(createRagSession/streamRun,官方:仅 PC/2in1)在 PC/2in1 端到端演示,回应答题要求② |
 | 3 跨设备协同(手机/平板/PC 流转) | 应用接续 + 分布式数据对象同步会话;真机手机↔平板实测;PC 留 Provider 空位 |
 | 4 ≥3 子智能体协作、自主分解任务 | Orchestrator + 学习助手 / 日程管家 / 文档处理;浅层=规则路由+提示词拆解,预留 LLM tool-calling 升级 |
 | 适配手机+平板 | 一多:资源限定符 + 平板双栏布局 |
@@ -29,6 +29,8 @@
 ## 2. 总体架构
 
 ```
+知识库构建端(PC/2in1):knowledgeProcessor 知识加工 → 倒排库 + 向量库
+        │ 产物 RDB 随应用包预置(安装/首启复制)
 交互层(手机/平板·一多)
   输入条[语音|文本|拍照/相册] + 会话/任务卡片流式 UI
         │
@@ -40,17 +42,18 @@ Agent 编排层  Orchestrator(意图识别·任务分解·路由·记忆)
   LLMProvider        ASRProvider        VisionProvider
   RetrievalProvider  ScheduleProvider   TransferProvider
 ──────────────────────────────────────────
-数据层  知识空间(导入/加工产物) · 会话/记忆 · 配置(敏感词自查)
+数据层  知识空间(retrieval 检索引擎 + 预置加工产物) · 会话/记忆 · 配置(敏感词自查)
 ```
 
 ### Provider 双实现策略(真机路径 / 模拟器降级)
 
 | Provider | 真机实现 | 模拟器降级(演示可跑) |
 | --- | --- | --- |
-| LLMProvider | 华为云盘古 API(或 openJiuwen) | 同(网络可达) / Mock |
+| LLMProvider | 华为云盘古 API(或 openJiuwen / DeepSeek) | 同(网络可达) / Mock |
 | ASRProvider | CoreSpeech 实时语音+热词 | 文本直入 / 音频文件(若引擎不可用) |
 | VisionProvider | Core Vision 图文识别(拍照→OCR) | 选图→读内置文本样例(流程完整) |
-| RetrievalProvider | DataAugmentationKit 知识加工+AIP 检索 | ArkTS 自研关键词/标题检索(同接口) |
+| RetrievalProvider | **手机/平板**:DataAugmentationKit `retrieval` 智慧化数据检索(倒排通道为主,向量通道作增强);知识库由 PC/2in1 加工后预置 | ArkTS 自研关键词/标题检索(同接口,已在 D4 落地) |
+| KnowledgeBuilder(非运行时) | **PC/2in1**:knowledgeProcessor 知识加工,产物(倒排库+向量库)打包预置 | 自研分块+索引(同产物结构) |
 | ScheduleProvider | 日历/提醒(真机) | 内存模拟日程 |
 | TransferProvider | 应用接续(真机双端) | UI 演示"已发送到对端"(mock) |
 
@@ -64,13 +67,25 @@ Agent 编排层  Orchestrator(意图识别·任务分解·路由·记忆)
 - 注意:加 `ohos.permission.INTERNET`,HTTPS;仿真机经宿主机网络即可访问云端。
 - 若华为云侧仅提供 AK/SK 签名鉴权:用 `@kit.CryptoArchitectureKit`(HMAC-SHA256)实现签名器;若提供 API Key/AppCode 直连更简单 —— D1 实测凭证类型后定。
 
-### 3.2 端侧 RAG(DataAugmentationKit)
-- 入库:知识加工(`knowledgeProcessor`)按 schema 生成向量库/倒排表;
-- 检索:智慧化数据检索(AIP,Phone/Tablet 支持)召回+重排;
-- 生成:LLM(盘古);RAG 流程"问题分解→查询改写→知识检索→生成"由编排层实现(自组装);
-- 溯源:检索记录带回原文位置,UI 以引用卡片呈现;
-- 合规:RAG 无敏感词风控,App 侧自做输入输出敏感词检查;
-- 现状提醒:RAG `rag`/端侧模型仅 PC/2in1 且 Kit 不支持模拟器 → 手机/平板走 AIP 检索路径,PC 侧留 rag API 可扩展位。
+### 3.2 端侧 RAG(DataAugmentationKit,贴合命题的分端架构)
+
+**官方能力边界(本机 SDK 文档核实):**
+- 知识加工 `knowledgeProcessor`:仅 PC/2in1 设备(嵌入模型仅部署于 PC/2in1);
+- `retrieval` 智慧化数据检索(召回+重排):支持 Phone / PC/2in1 / Tablet;
+- 完整 `rag` 模块(createRagSession + streamRun 流式问答):仅 PC/2in1;
+- 端侧问答模型 `localChatModel` / AIP 数据向量化:仅 PC/2in1 / 2in1;
+- Kit 整体不支持模拟器;知识加工表不支持端端/端云同步。
+
+命题要求"利用鸿蒙 RAG 模块在本地构建知识库 + 离线语义检索问答,并适配手机+平板",故采用**分端落地的 RAG 架构**(既满足命题、也守住官方支持矩阵):
+
+1. **知识构建(PC/2in1 加工端)**:`knowledgeProcessor` 按 `knowledge_schema.json` 加工课程笔记/文献/会议纪要等 → 产物 = 倒排库(原库内建 inverted 表)+ 向量库(`dbName_vector.db`,含 `chunk_id/chunk_source/chunk_text/repr` 等),仅 PC/2in1 可生成。
+2. **知识库随包预置(手机/平板)**:加工完成的 RDB 产物**随应用安装包或首启复制**到手机/平板沙箱 database 目录,应用以普通 RDB 打开只读使用,不在端上重新加工(规避手机不可加工的限制)。
+3. **检索(手机/平板)**:`retrieval.getRetriever` 建多路召回(VECTOR_DATABASE + INVERTED_INDEX_DATABASE)→ `retrieveRdb` 召回+重排(RRF / 分数融合,BM25 精确/乱序策略)→ 返回 `RdbRecords`(含 chunk 文本、偏移 → 引用溯源)。手机/平板侧向量召回时 `VectorQuery.value` 需**自行提供**查询向量(端上不做嵌入),故可退化为"纯倒排召回 + RRF"兜底。
+4. **生成(手机/平板,自组装 RAG)**:因完整 `rag` 模块仅 PC/2in1,手机/平板在 Provider 内自组装:`query → 问题改写(可选) → retrieval 召回 → 云端 LLM(盘古/DeepSeek)→ 流式回答`;LLM 不落地到端上时属端云协同,符合"LLM 接口可自主选择"。
+5. **官方 RAG 能力对齐(PC/2in1,加分项)**:在 PC/2in1 上实现 `rag.ChatLLM` 子类 + `createRagSession` + `streamRun`(THOUGHT/REFERENCE/ANSWER 流),用同一知识库演示**官方 RAG API**,证明命题第②答题要求已使用 `@kit.DataAugmentationKit` RAG API,规避"手机无 RAG API"的口径风险。
+6. **合规**:输入输出敏感词自查(Kit 不提供风控);引用溯源随 RdbRecords 携带。
+
+> 现状提醒:D5 需真机确认 —— 预置 RDB 在手机/平板上是否可被 `retrieval` 直接打开检索;若不可行则回退 D4 自研检索+云端 LLM(仅影响"端侧离线",不影响整体流程)。
 
 ### 3.3 语音
 CoreSpeech 端侧离线 ASR(中文;短语音≤60s),系统/会话热词共≤200 条预置领域词(课程、日程、指令词),提升识别精度;`StartParams` 调自动停止参数保证交互体验。
@@ -118,7 +133,7 @@ entry/src/main/ets/
 - D2 LLM 文本问答跑通(盘古;凭证未到先 mock 流式)
 - D3 语音输入(真机 CoreSpeech+热词;模拟器文本降级)
 - D4 知识库浅层:文件导入+RetrievalProvider 双实现+引用溯源
-- D5 真机 DataAugmentationKit:知识加工+AIP 检索+自组装 RAG 问答
+- D5 真机 DataAugmentationKit 分端 RAG:PC/2in1 knowledgeProcessor 加工 → 产物预置手机/平板 → retrieval 检索 + 自组装 RAG;PC/2in1 演示官方 rag API(streamRun)
 - D6 Agent 编排:Orchestrator+3 子 Agent+复合指令(拍照→OCR→总结)端到端
 - D7 跨端接续(手机↔平板)+一多布局
 - D8 指标真机实测优化 + 设计文档撰写
@@ -134,7 +149,10 @@ entry/src/main/ets/
 | 风险 | 对策 |
 | --- | --- |
 | 华为云盘古凭证类型不明(AK/SK vs Key) | D1 实测;AK/SK 则用 CryptoArchitectureKit 实现签名器 |
-| DataAugmentationKit 真机可用性/权限 | 以 AIP 检索路径为主,知识加工失败有自研检索兜底 |
+| 知识加工/官方 rag 仅 PC/2in1 可用 | 分端架构定案:PC/2in1 加工与演示官方 RAG,手机/平板走 retrieval + 自组装;产物随包预置 |
+| 手机/平板打开预置 RDB 可能不被 retrieval 接受或触发重加工 | D5 首项真机验证;失败则回退 D4 自研检索 + 云端 LLM(仅损失端侧离线语义) |
+| 手机/平板向量召回需自备 query 向量 | 以倒排召回为主、向量为辅;query 向量由云端 embedding 生成下发,或直接降级倒排+RRF |
+| DataAugmentationKit 真机可用性/权限 | 以 retrieval 检索路径为主,知识加工失败有自研检索兜底 |
 | 9 天窗口 | 浅层先行;模拟器降级保证全流程可演示;代码仓库随时可回退 |
 | 双机接续环境(同账号/组网) | 提前两天联调;失败则 UI+分布式数据对象最小演示 |
 | 文档 ≤20MB | 截图压缩;图表矢量/位图混用 |
@@ -143,6 +161,7 @@ entry/src/main/ets/
 
 - [ ] 华为云账号注册 + ModelStudio 开通,确认凭证类型与免费额度(当前:LLM 用 Mock 兜底,可快速切 DeepSeek/盘古)
 - [x] 双真机同一华为账号且已组网、可连 DevEco(用户已确认)
+- [ ] **准备一台 PC/2in1**:承担知识加工(knowledgeProcessor)与官方 rag API 演示(能力矩阵见 §3.2)
 - [ ] 命题上传具体入口/是否要求代码仓库地址(以大赛平台为准)
 - [x] 工程兼容版本调整为 6.0.2(22),可在现有 API22 模拟器运行(target 仍 6.1.0(23))
 
@@ -169,8 +188,8 @@ entry/src/main/ets/
   - [x] D4.2 KnowledgeStore:rawfile 示例导入、文档选择器导入、文件持久化(首次启动自动载入 3 篇示例)
   - [x] D4.3 RetrievalProvider 接口 + 本地关键词检索(LocalKeywordRetrieval,含引用偏移/命中片段)+ DAG 占位(DagRetrievalProvider,待 D5 真机)
   - [x] D4.4 知识库页(KnowledgePage):文档列表/删除、恢复示例、导入文档、检索即引用卡片(模拟器已可演示)
-  - [ ] D4.5 真机验证(导入真实文档/检索正确性/引用溯源核对)
-- [ ] D5:真机 DataAugmentationKit(AIP 检索自组装 RAG)
+  - [ ] D4.5 真机验证(导入真实文档/检索正确性/引用溯源核对;验收官按 docs/真机验收用例清单.md 第3节执行)
+- [ ] D5:真机 DataAugmentationKit 分端 RAG:PC/2in1 加工 → 产物预置 → retrieval 检索 + 自组装 RAG
 - [ ] D6:Agent 编排(Orchestrator + 学习/日程/文档 子 Agent + 复合指令)
 - [ ] D7:跨端接续 + 一多布局
 - [ ] D8:指标优化 + 文档撰写
