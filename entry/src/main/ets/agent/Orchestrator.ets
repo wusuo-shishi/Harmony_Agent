@@ -4,7 +4,9 @@ import { RetrievalProvider } from '../provider/retrieval/RetrievalProvider';
 import { ScheduleProvider } from '../provider/schedule/ScheduleProvider';
 import { VisionProvider } from '../provider/vision/VisionProvider';
 import { KnowledgeStore } from '../knowledge/KnowledgeStore';
-import { AgentKind, AgentRunResult } from './AgentModels';
+import { AgentKind, AgentRunResult, AgentStep } from './AgentModels';
+import { RetrievalHit } from '../model/KnowledgeModels';
+import { RetrievalConfig } from '../provider/retrieval/RetrievalConfig';
 import { StepListener } from './StepListener';
 import { IntentResult, IntentRouter } from './IntentRouter';
 import { LearningAgent } from './LearningAgent';
@@ -52,6 +54,21 @@ export class Orchestrator {
     if (intent.kind === AgentKind.Document) {
       this.prepareVisionProvider(deps);
       return await this.document.run(text, deps.llm, deps.vision, deps.imageUri, deps.store, onStep);
+    }
+    // General(无明确操作意图):先探测知识库,命中则给带引用回答;未命中才纯通用对话
+    let probeHits: RetrievalHit[] = [];
+    try {
+      probeHits = await deps.retrieval.retrieve(text, RetrievalConfig.DEFAULT_TOP_K);
+    } catch (err) {
+      probeHits = [];
+    }
+    if (probeHits.length > 0) {
+      const steps: AgentStep[] = [];
+      steps.push(AgentStep.of('1. 解析问题'));
+      onStep(steps);
+      steps.push(AgentStep.of('2. 检索知识库(命中,进入知识问答)'));
+      onStep(steps);
+      return await this.learning.answerWithHitsInto(text, deps.llm, probeHits, steps, onStep);
     }
     const result: AgentRunResult = new AgentRunResult();
     result.kind = AgentKind.General;

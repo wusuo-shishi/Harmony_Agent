@@ -10,9 +10,6 @@ export class LearningAgent {
   readonly agentName: string = '学习助手';
 
   async run(query: string, llm: LLMProvider, retrieval: RetrievalProvider, onStep: StepListener): Promise<AgentRunResult> {
-    const result: AgentRunResult = new AgentRunResult();
-    result.kind = AgentKind.Learning;
-    result.agentName = this.agentName;
     const steps: AgentStep[] = [];
     steps.push(AgentStep.of('1. 解析问题(意图:知识库问答)'));
     onStep(steps);
@@ -26,8 +23,18 @@ export class LearningAgent {
     } catch (err) {
       hits = [];
     }
-    steps[steps.length - 1].detail = hits.length > 0 ? `召回 ${hits.length} 条` : '未命中,将直接回答';
-    steps[steps.length - 1].state = StepState.Done;
+    return await this.answerWithHitsInto(query, llm, hits, steps, onStep);
+  }
+
+  async answerWithHitsInto(query: string, llm: LLMProvider, hits: RetrievalHit[], steps: AgentStep[],
+    onStep: StepListener): Promise<AgentRunResult> {
+    const result: AgentRunResult = new AgentRunResult();
+    result.kind = AgentKind.Learning;
+    result.agentName = this.agentName;
+    if (steps.length > 0) {
+      steps[steps.length - 1].detail = hits.length > 0 ? `召回 ${hits.length} 条` : '未命中,将直接回答';
+      steps[steps.length - 1].state = StepState.Done;
+    }
     steps.push(AgentStep.of('3. 组织回答(LLM 生成,附引用)'));
     onStep(steps);
 
