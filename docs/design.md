@@ -194,6 +194,7 @@ entry/src/main/ets/
   - [x] D4.2 KnowledgeStore:rawfile 示例导入、文档选择器导入、文件持久化(首次启动自动载入 3 篇示例)
   - [x] D4.3 RetrievalProvider 接口 + 本地关键词检索(LocalKeywordRetrieval,含引用偏移/命中片段)+ DAG 占位(DagRetrievalProvider,待 D5 真机)
   - [x] D4.4 知识库页(KnowledgePage):文档列表/删除、恢复示例、导入文档、检索即引用卡片(模拟器已可演示)
+  - [x] D4.4b 体验增强(真机反馈 2026-09-04):文档点击预览全文(预览层可滚动)、恢复示例去重(已存在则不重复添加,返回实际新增数)
   - [ ] D4.5 真机验证(导入真实文档/检索正确性/引用溯源核对;验收官按 docs/真机验收用例清单.md 第3节执行)
 - [ ] D5:真机 DataAugmentationKit 分端 RAG:PC/2in1 加工 → 产物预置 → retrieval 检索 + 自组装 RAG
 - [ ] D6:Agent 编排(Orchestrator + 学习/日程/文档 子 Agent + 复合指令)
@@ -204,7 +205,7 @@ entry/src/main/ets/
   - [x] D6.5 模拟器端到端回归通过(学习助手引用溯源 / 日程安排 / 识图总结 / 通用对话)
   - [ ] D6.6 真机验证:日历写入 CalendarKit、CoreVision OCR、复合指令「拍一下…总结」完整链路
 - [ ] D7:跨端接续 + 一多布局
-  - [x] D7.1 一多布局:KnowledgePage 逻辑抽取为复用组件 KnowledgeView;Index 大屏(≥840vp)自动双栏(左会话+右知识库),窄屏维持单栏独立页(mediaquery 驱动)
+  - [x] D7.1 一多布局:KnowledgePage 逻辑抽取为复用组件 KnowledgeView;Index 大屏(非 phone 且宽≥600vp,平板横竖屏一致)自动双栏(左会话+右知识库),手机恒单栏(mediaquery 驱动;2026-09-04 由 ≥840vp 收紧为设备类型+600vp)
   - [ ] D7.2 双栏宽屏真机/折叠屏截图走查(代码已就绪,待平板/折叠环境)
   - [ ] D7.3 跨端应用接续(手机↔平板)仍待开发
 - [ ] D8:指标优化 + 文档撰写
