@@ -469,6 +469,7 @@ struct Index {
           .fontSize(16)
           .fontColor(msg.role === ChatRole.User ? '#FFFFFF' : '#1A1A1A')
           .lineHeight(22)
+          .wordBreak(WordBreak.BREAK_ALL)
           .copyOption(CopyOptions.LocalDevice)
           .width('100%')
       }
@@ -536,6 +537,7 @@ struct Index {
                 .fontSize(16)
                 .fontColor('#1A1A1A')
                 .lineHeight(22)
+                .wordBreak(WordBreak.BREAK_ALL)
                 .copyOption(CopyOptions.LocalDevice)
             }
             .constraintSize({ maxWidth: '88%' })
