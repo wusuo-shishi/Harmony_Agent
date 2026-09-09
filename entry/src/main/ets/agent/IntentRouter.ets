@@ -19,6 +19,29 @@ export class IntentRouter {
   private static readonly documentKeys: string[] = ['拍照', '拍一下', '照片', '图片', '拍摄', 'ocr', '扫描', '拍这个', '识图', '图里'];
   private static readonly learningKeys: string[] = ['知识库', '检索', '引用', '资料', '文档总结', '总结一下', '汇总'];
 
+  static isTrivialQuery(text: string): boolean {
+    const t: string = text.trim();
+    if (t.length === 0) {
+      return true;
+    }
+    let hasCjk: boolean = false;
+    let hasLetter: boolean = false;
+    for (let i = 0; i < t.length; i++) {
+      const code: number = t.charCodeAt(i);
+      if (code >= 0x4e00 && code <= 0x9fff) {
+        hasCjk = true;
+      } else if ((code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a)) {
+        hasLetter = true;
+      }
+    }
+    if (hasCjk || hasLetter) {
+      return false;
+    }
+    // 纯数字/符号/标点/表情(如 "1"、"123"、"!!!")不当作知识库查询;
+    // 有字母的短输入(如 "AI"/"5G"/"OK")仍允许检索
+    return true;
+  }
+
   static route(text: string): IntentResult {
     const t: string = text.toLowerCase();
     let bestKind: AgentKind = AgentKind.General;

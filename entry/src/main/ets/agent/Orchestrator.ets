@@ -73,6 +73,20 @@ export class Orchestrator {
       return await this.runDocument(text, deps, onStep, onDelta);
     }
     // General(无明确操作意图):先探测知识库,命中则给带引用回答;未命中才纯通用对话
+    if (IntentRouter.isTrivialQuery(text)) {
+      const result: AgentRunResult = new AgentRunResult();
+      result.kind = AgentKind.General;
+      result.agentName = '通用对话';
+      const history: ChatMessage[] = [ChatMessage.of(ChatRole.User, text)];
+      try {
+        result.answer = await deps.llm.streamChat(history, (delta: string): void => {
+          onDelta?.(delta);
+        });
+      } catch (err) {
+        result.answer = '抱歉,获取回复失败,请稍后重试。';
+      }
+      return result;
+    }
     let probeHits: RetrievalHit[] = [];
     try {
       probeHits = await deps.retrieval.retrieve(text, RetrievalConfig.DEFAULT_TOP_K);

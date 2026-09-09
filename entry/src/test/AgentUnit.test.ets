@@ -46,6 +46,22 @@ export default function agentUnitTest() {
       const r: IntentResult = IntentRouter.route('明天下午提醒我整理会议资料');
       expect(r.kind).assertEqual(AgentKind.Schedule);
     });
+
+    it('pureDigitOrSymbol_isTrivial', 0, () => {
+      expect(IntentRouter.isTrivialQuery('1')).assertTrue();
+      expect(IntentRouter.isTrivialQuery('123')).assertTrue();
+      expect(IntentRouter.isTrivialQuery('!!!')).assertTrue();
+      expect(IntentRouter.isTrivialQuery('  ')).assertTrue();
+    });
+
+    it('lettersOrCjk_notTrivial', 0, () => {
+      expect(IntentRouter.isTrivialQuery('AI')).assertFalse();
+      expect(IntentRouter.isTrivialQuery('5G')).assertFalse();
+      expect(IntentRouter.isTrivialQuery('hi')).assertFalse();
+      expect(IntentRouter.isTrivialQuery('栈')).assertFalse();
+      expect(IntentRouter.isTrivialQuery('2026年安排')).assertFalse();
+      expect(IntentRouter.isTrivialQuery('hello world')).assertFalse();
+    });
   });
 
   describe('ScheduleTextParser', () => {
