@@ -66,6 +66,16 @@ export default class EntryAbility extends UIAbility {
   onWindowStageCreate(windowStage: window.WindowStage): void {
     hilog.info(DOMAIN, TAG, 'onWindowStageCreate at %{public}d ms', Date.now() - this.launchStart);
 
+    try {
+      // 发布软键盘高度(px),供页面手动避让,避免系统"整体上抬"把顶栏顶出屏幕
+      const win = windowStage.getMainWindowSync();
+      win.on('keyboardHeightChange', (height: number) => {
+        AppStorage.setOrCreate<number>('kbHeightPx', height);
+      });
+    } catch (err) {
+      hilog.error(DOMAIN, TAG, 'register keyboardHeightChange failed: %{public}s', JSON.stringify(err));
+    }
+
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {
         hilog.error(DOMAIN, TAG, 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));

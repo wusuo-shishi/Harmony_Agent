@@ -1,8 +1,12 @@
-import { common } from '@kit.AbilityKit';
+import { abilityAccessCtrl, common } from '@kit.AbilityKit';
 import { calendarManager } from '@kit.CalendarKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { ScheduleDraft } from '../../agent/AgentModels';
 import { ScheduleProvider } from './ScheduleProvider';
+
+interface CalendarPermissionResult {
+  authResults: number[];
+}
 
 export class CalendarScheduleProvider implements ScheduleProvider {
   readonly providerName: string = '系统日历(HarmonyOS CalendarKit)';
@@ -17,6 +21,10 @@ export class CalendarScheduleProvider implements ScheduleProvider {
   }
 
   async addEvent(draft: ScheduleDraft): Promise<string> {
+    const granted: boolean = await this.ensureCalendarPermission();
+    if (!granted) {
+      throw new Error('未授予日历读写权限,请在系统设置中允许本应用访问「日历」后重试。');
+    }
     const manager: calendarManager.CalendarManager = calendarManager.getCalendarManager(this.ctx);
     let cal: calendarManager.Calendar | undefined = undefined;
     try {
@@ -42,9 +50,9 @@ export class CalendarScheduleProvider implements ScheduleProvider {
       title: draft.title,
       startTime: draft.startTime,
       endTime: draft.endTime,
-      reminderTime: [draft.reminderMinutes * 60 * 1000],
-      description: draft.rawText,
-      location: draft.location.length > 0 ? { location: draft.location } : undefined
+      // CalendarKit 单位:提前 N 分钟提醒(如 15 = 提前15分钟),不是毫秒
+      reminderTime: [draft.reminderMinutes],
+      description: draft.rawText
     };
     try {
       const eventId: number = await cal.addEvent(event);
@@ -72,6 +80,27 @@ export class CalendarScheduleProvider implements ScheduleProvider {
       return lines;
     } catch (err) {
       return [];
+    }
+  }
+
+  private async ensureCalendarPermission(): Promise<boolean> {
+    const atManager = abilityAccessCtrl.createAtManager();
+    try {
+      const token: number = this.ctx.applicationInfo.accessTokenId;
+      const status: abilityAccessCtrl.GrantStatus =
+        atManager.checkAccessTokenSync(token, 'ohos.permission.WRITE_CALENDAR');
+      if (status === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) {
+        return true;
+      }
+    } catch (err) {
+    }
+    try {
+      const result = await atManager.requestPermissionsFromUser(this.ctx,
+        ['ohos.permission.READ_CALENDAR', 'ohos.permission.WRITE_CALENDAR']);
+      const granted: CalendarPermissionResult = result as CalendarPermissionResult;
+      return granted.authResults !== undefined && granted.authResults.length > 0 && granted.authResults[0] === 0;
+    } catch (err) {
+      return false;
     }
   }
 

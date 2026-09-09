@@ -221,7 +221,7 @@ export class Orchestrator {
       cancelled.kind = AgentKind.Document;
       cancelled.agentName = '文档处理';
       cancelled.steps = steps;
-      cancelled.answer = '未选择图片,已取消文档处理。可点下方【识图】按钮重新拍照/选择,或输入要处理的文字内容。';
+      cancelled.answer = '未选择图片,已取消文档处理。可点输入框右侧「+」选图/拍照重试,或直接输入要处理的文字内容。';
       onStep(steps);
       return cancelled;
     }
@@ -250,7 +250,7 @@ export class Orchestrator {
             cancelled.kind = AgentKind.Document;
             cancelled.agentName = '复合任务';
             cancelled.steps = allSteps;
-            cancelled.answer = '未选择图片,已取消复合任务。可点下方【识图】按钮重新选择。';
+            cancelled.answer = '未选择图片,已取消复合任务。可点输入框右侧「+」选图/拍照重新选择。';
             onStep(allSteps);
             return cancelled;
           }

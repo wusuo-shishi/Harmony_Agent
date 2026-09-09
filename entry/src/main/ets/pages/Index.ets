@@ -12,6 +12,8 @@ import { CapabilityManager } from '../core/CapabilityManager';
 import { AgentDeps, Orchestrator } from '../agent/Orchestrator';
 import { AgentRunResult, AgentStep, AgentKind, StepState } from '../agent/AgentModels';
 import { KnowledgeView } from '../common/KnowledgeView';
+import { MarkdownText } from '../common/MarkdownText';
+import { UiTheme } from '../common/UiTheme';
 
 interface PermissionRequest {
   authResults: number[];
@@ -32,6 +34,7 @@ struct Index {
   @State streamingText: string = '';
   @State streamingVisible: boolean = false;
   @State pendingImages: string[] = [];
+  @StorageProp('kbHeightPx') kbHeightPx: number = 0;
   @State bubbleCapVp: number = 420;
   private scroller: Scroller = new Scroller();
   private maxHistory: number = 20;
@@ -42,8 +45,8 @@ struct Index {
 
   aboutToAppear(): void {
     try {
-      // 键盘弹出时压缩内容区而非整体上抬,避免顶部栏被顶出屏幕
-      this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.RESIZE);
+      // 禁止系统整体上抬避让(会把顶栏顶出屏幕),改由 EntryAbility 监听键盘高度手动抬起输入条
+      this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.NONE);
     } catch (err) {
     }
     ProviderHub.initFromConfig();
@@ -58,7 +61,8 @@ struct Index {
         '支持三类智能体,直接输入即可自动路由:\n' +
         '· 学习助手:如「引用溯源是什么」→ 检索知识库+引用回答\n' +
         '· 日程管家:如「明天下午3点开组会提醒我」\n' +
-        '· 文档处理:点下方【识图】拍照/相册→OCR→总结\n' +
+        '· 文档处理:点输入框右侧「+」选图/拍照→OCR→总结\n' +
+        '· 语音输入:点输入框左侧的麦克风按钮\n' +
         '点右上角「知识库」可管理文档。');
       this.appendMessage(greeting);
     }
@@ -67,7 +71,7 @@ struct Index {
   aboutToDisappear(): void {
     this.unregisterWideMode();
     try {
-      this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.OFFSET);
+      this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.NONE);
     } catch (err) {
     }
     const ctx = this.context();
@@ -412,29 +416,37 @@ struct Index {
     Row() {
       if (step.state === StepState.Running) {
         LoadingProgress()
-          .width(16)
-          .height(16)
-          .color('#0A59F7')
+          .width(14)
+          .height(14)
+          .color(UiTheme.Accent)
       } else if (step.state === StepState.Failed) {
         Text('✕')
-          .fontSize(13)
-          .fontColor('#E84026')
-          .width(16)
+          .fontSize(10)
+          .fontColor(UiTheme.Danger)
+          .width(18)
+          .height(18)
+          .textAlign(TextAlign.Center)
+          .backgroundColor(UiTheme.DangerSoft)
+          .borderRadius(9)
       } else {
         Text('✓')
-          .fontSize(13)
-          .fontColor('#10A37F')
-          .width(16)
+          .fontSize(10)
+          .fontColor(UiTheme.Success)
+          .width(18)
+          .height(18)
+          .textAlign(TextAlign.Center)
+          .backgroundColor(UiTheme.SuccessSoft)
+          .borderRadius(9)
       }
       Column() {
         Text(step.title)
           .fontSize(13)
-          .fontColor('#1A1A1A')
+          .fontColor(UiTheme.TextPrimary)
           .width('100%')
         if (step.detail.length > 0) {
           Text(step.detail)
             .fontSize(11)
-            .fontColor('#8A8A8E')
+            .fontColor(UiTheme.TextSubtle)
             .width('100%')
             .margin({ top: 2 })
         }
@@ -455,40 +467,49 @@ struct Index {
         Text(this.agentTitle)
           .fontSize(14)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#0A59F7')
+          .fontColor(UiTheme.Accent)
           .layoutWeight(1)
         if (this.agentRunning) {
           Text('执行中…')
             .fontSize(11)
-            .fontColor('#8A8A8E')
+            .fontColor(UiTheme.Accent)
+            .backgroundColor(UiTheme.AccentSoft)
+            .borderRadius(9)
+            .padding({ left: 8, right: 8, top: 3, bottom: 3 })
         }
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
-      .padding({ bottom: 4 })
+      .padding({ bottom: 6 })
       ForEach(this.agentSteps, (step: AgentStep) => {
         this.StepRow(step)
       }, (step: AgentStep) => step.title)
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
-    .backgroundColor('#F2F6FF')
-    .borderRadius(12)
+    .backgroundColor(UiTheme.Card)
+    .border({ width: 1, color: '#E3E9F8' })
+    .borderRadius(16)
     .padding(12)
+    .margin({ top: 4, bottom: 4 })
+    .shadow({ radius: 16, color: UiTheme.ShadowColor, offsetX: 0, offsetY: 4 })
   }
 
   @Builder
   MessageBubble(msg: ChatMessage) {
     Column() {
       if (msg.content.length > 0) {
-        // 约束放在 Text 上:Column 按内容自适应宽度,文本超过 cap 时换行封顶
-        Text(msg.content)
-          .fontSize(16)
-          .fontColor(msg.role === ChatRole.User ? '#FFFFFF' : '#1A1A1A')
-          .lineHeight(22)
-          .wordBreak(WordBreak.BREAK_ALL)
-          .constraintSize({ maxWidth: this.bubbleCapVp })
-          .copyOption(CopyOptions.LocalDevice)
+        if (msg.role === ChatRole.User) {
+          Text(msg.content)
+            .fontSize(16)
+            .fontColor('#FFFFFF')
+            .lineHeight(23)
+            .wordBreak(WordBreak.BREAK_ALL)
+            .constraintSize({ maxWidth: this.bubbleCapVp })
+            .copyOption(CopyOptions.LocalDevice)
+        } else {
+          MarkdownText({ text: msg.content, maxWidthVp: this.bubbleCapVp })
+        }
       }
       if (msg.imageUris.length > 0) {
         Flex({ wrap: FlexWrap.Wrap }) {
@@ -497,27 +518,27 @@ struct Index {
               Column() {
                 Text('[图片]')
                   .fontSize(12)
-                  .fontColor('#666666')
+                  .fontColor(UiTheme.TextSubtle)
               }
               .width(70)
               .height(52)
               .justifyContent(FlexAlign.Center)
-              .backgroundColor('#EEF0F3')
-              .borderRadius(6)
+              .backgroundColor('#EEF1F7')
+              .borderRadius(8)
               .margin(2)
             } else {
               Image(uri)
                 .width(70)
                 .height(52)
                 .objectFit(ImageFit.Cover)
-                .borderRadius(6)
+                .borderRadius(8)
                 .margin(2)
             }
           }, (uri: string) => uri)
           if (msg.imageUris.length > 4) {
             Text(`+${msg.imageUris.length - 4}`)
               .fontSize(14)
-              .fontColor('#8A8A8E')
+              .fontColor(UiTheme.TextSubtle)
               .margin({ left: 4 })
           }
         }
@@ -527,15 +548,17 @@ struct Index {
     }
     .alignItems(HorizontalAlign.Start)
     .constraintSize({ maxWidth: this.bubbleCapVp })
-    .backgroundColor(msg.role === ChatRole.User ? '#0A59F7' : '#FFFFFF')
-    .borderRadius(14)
-    .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+    .backgroundColor(msg.role === ChatRole.User ? UiTheme.UserB : UiTheme.Card)
+    .borderRadius(18)
+    .border({ width: msg.role === ChatRole.User ? 0 : 1, color: UiTheme.Border })
+    .padding({ left: 13, right: 13, top: 9, bottom: 9 })
+    .shadow({ radius: 12, color: UiTheme.ShadowColor, offsetX: 0, offsetY: 3 })
   }
 
   @Builder
   ChatColumn() {
     Column() {
-      List({ space: 8, scroller: this.scroller }) {
+      List({ space: 10, scroller: this.scroller }) {
         ForEach(this.messages, (msg: ChatMessage) => {
           ListItem() {
             Row() {
@@ -557,21 +580,24 @@ struct Index {
             Row() {
               Text(this.streamingText)
                 .fontSize(16)
-                .fontColor('#1A1A1A')
-                .lineHeight(22)
+                .fontColor(UiTheme.TextPrimary)
+                .lineHeight(23)
                 .wordBreak(WordBreak.BREAK_ALL)
                 .copyOption(CopyOptions.LocalDevice)
             }
             .width(this.bubbleCapVp)
-            .backgroundColor('#FFFFFF')
-            .borderRadius(14)
-            .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+            .backgroundColor(UiTheme.Card)
+            .border({ width: 1, color: UiTheme.Border })
+            .borderRadius(18)
+            .padding({ left: 13, right: 13, top: 9, bottom: 9 })
+            .shadow({ radius: 12, color: UiTheme.ShadowColor, offsetX: 0, offsetY: 3 })
           }
         }
       }
       .width('100%')
       .layoutWeight(1)
-      .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+      .padding({ left: 12, right: 12, top: 12, bottom: 6 })
+      .scrollBar(BarState.Off)
 
       if (this.pendingImages.length > 0) {
         Column() {
@@ -583,13 +609,13 @@ struct Index {
                     Column() {
                       Text('[图片]')
                         .fontSize(13)
-                        .fontColor('#666666')
+                        .fontColor(UiTheme.TextSubtle)
                     }
                     .width(64)
                     .height(64)
                     .justifyContent(FlexAlign.Center)
-                    .backgroundColor('#E2E6EC')
-                    .borderRadius(8)
+                    .backgroundColor('#EEF1F7')
+                    .borderRadius(10)
                   } else {
                     Image(uri)
                       .width(64)
@@ -619,51 +645,76 @@ struct Index {
 
           Text('已选 ' + this.pendingImages.length + ' 张,可继续输入文字后一并发送')
             .fontSize(11)
-            .fontColor('#8A8A8E')
+            .fontColor(UiTheme.TextSubtle)
             .width('100%')
             .margin({ top: 4 })
         }
         .width('100%')
         .padding({ left: 12, right: 12, top: 6, bottom: 2 })
-        .backgroundColor('#F7F8FA')
+        .backgroundColor(UiTheme.Bg)
       }
 
       Row({ space: 8 }) {
-        Button(this.voiceOn ? '停止' : '语音')
-          .height(44)
-          .backgroundColor(this.voiceOn ? '#E84026' : '#5B7CFA')
-          .fontColor('#FFFFFF')
-          .onClick(() => {
-            this.toggleVoice();
-          })
-        Button('图片')
-          .height(44)
-          .backgroundColor('#10A37F')
-          .fontColor('#FFFFFF')
-          .enabled(!this.agentRunning)
-          .onClick(() => {
-            this.pickImages();
-          })
+        Button() {
+          Image($r('app.media.ic_mic'))
+            .width(24)
+            .height(24)
+            .objectFit(ImageFit.Contain)
+        }
+        .width(42)
+        .height(42)
+        .type(ButtonType.Circle)
+        .backgroundColor(this.voiceOn ? UiTheme.Danger : '#4C6EF5')
+        .onClick(() => {
+          this.toggleVoice();
+        })
         TextInput({ placeholder: this.voiceOn ? '聆听中,请说话…' : '输入消息…', text: this.inputText })
           .layoutWeight(1)
-          .height(44)
+          .height(42)
           .fontSize(16)
+          .fontColor(UiTheme.TextPrimary)
+          .placeholderColor('#8A94A6')
+          .backgroundColor('#EEF2F9')
+          .border({ width: 1, color: '#D9E0EC' })
+          .borderRadius(21)
           .onChange((value: string) => {
             this.inputText = value;
           })
           .onSubmit((enterKey: EnterKeyType) => {
             this.onSend();
           })
+        Button() {
+          Image($r('app.media.ic_plus'))
+            .width(24)
+            .height(24)
+            .objectFit(ImageFit.Contain)
+        }
+        .width(42)
+        .height(42)
+        .type(ButtonType.Circle)
+        .backgroundColor(UiTheme.SuccessSoft)
+        .enabled(!this.agentRunning)
+        .onClick(() => {
+          this.pickImages();
+        })
         Button(this.loading || this.agentRunning ? '…' : '发送')
-          .height(44)
+          .height(42)
+          .fontSize(15)
+          .fontColor('#FFFFFF')
+          .backgroundColor('#4C6EF5')
+          .borderRadius(21)
           .enabled(!this.loading && !this.agentRunning)
           .onClick(() => {
             this.onSend();
           })
       }
       .width('100%')
-      .padding({ left: 12, right: 12, top: 8, bottom: 12 })
-      .backgroundColor('#F1F3F5')
+      .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+      .margin({ left: 10, right: 10, bottom: this.kbHeightPx > 0 ? `${this.kbHeightPx}px` : 10 })
+      .backgroundColor(UiTheme.Card)
+      .border({ width: 1, color: UiTheme.Border })
+      .borderRadius(24)
+      .shadow({ radius: 16, color: UiTheme.ShadowColor, offsetX: 0, offsetY: 4 })
     }
     .width('100%')
     .height('100%')
@@ -676,7 +727,7 @@ struct Index {
         Text('知识库')
           .fontSize(15)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#1A1A1A')
+          .fontColor(UiTheme.TextPrimary)
           .layoutWeight(1)
       }
       .width('100%')
@@ -686,29 +737,40 @@ struct Index {
     }
     .width('38%')
     .height('100%')
-    .border({ width: { left: 1 }, color: '#E2E4E8' })
-    .backgroundColor('#F7F8FA')
+    .border({ width: { left: 1 }, color: UiTheme.Border })
+    .backgroundColor(UiTheme.Bg)
   }
 
   build() {
     Column() {
       Row() {
-        Text('OpenHarmonyAgent')
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#FFFFFF')
-          .layoutWeight(1)
+        Column() {
+          Text('OpenHarmonyAgent')
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#FFFFFF')
+          Text('鸿蒙原生智能 · 多模态个人助理')
+            .fontSize(11)
+            .fontColor('rgba(255,255,255,0.75)')
+            .margin({ top: 3 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
         Text('知识库')
-          .fontSize(14)
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
           .fontColor('#FFFFFF')
-          .padding({ left: 12, right: 4, top: 6, bottom: 6 })
+          .backgroundColor('rgba(255,255,255,0.18)')
+          .borderRadius(17)
+          .padding({ left: 14, right: 14, top: 7, bottom: 7 })
           .onClick(() => {
             this.openKnowledge();
           })
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-      .backgroundColor('#0A59F7')
+      .padding({ left: 18, right: 16, top: 16, bottom: 15 })
+      .alignItems(VerticalAlign.Center)
+      .linearGradient({ angle: 135, colors: [[UiTheme.HdrA, 0.0], [UiTheme.HdrB, 1.0]] })
 
       if (this.isWide) {
         Row() {
@@ -731,6 +793,6 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F1F3F5')
+    .backgroundColor(UiTheme.Bg)
   }
 }

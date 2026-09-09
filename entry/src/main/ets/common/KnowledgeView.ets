@@ -7,6 +7,7 @@ import { RetrievalProvider } from '../provider/retrieval/RetrievalProvider';
 import { Bm25Retrieval } from '../provider/retrieval/Bm25Retrieval';
 import { ProviderHub } from '../provider/ProviderHub';
 import { RetrievalConfig } from '../provider/retrieval/RetrievalConfig';
+import { UiTheme } from './UiTheme';
 
 @Component
 export struct KnowledgeView {
@@ -191,36 +192,41 @@ export struct KnowledgeView {
         Text(hit.docTitle)
           .fontSize(15)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#0A59F7')
+          .fontColor(UiTheme.Accent)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
         Text(`#分块 ${hit.chunkIndex + 1}`)
           .fontSize(11)
-          .fontColor('#8A8A8E')
+          .fontColor(UiTheme.Accent)
+          .backgroundColor(UiTheme.AccentSoft)
+          .borderRadius(9)
+          .padding({ left: 8, right: 8, top: 3, bottom: 3 })
           .margin({ left: 8 })
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
       Text(hit.snippet)
         .fontSize(13)
-        .fontColor('#3A3A3C')
-        .lineHeight(19)
+        .fontColor(UiTheme.TextSecondary)
+        .lineHeight(20)
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
-        .margin({ top: 6 })
+        .margin({ top: 8 })
       Text(`命中 ${hit.termCount} 个关键词 · 得分 ${hit.score} · 原文偏移 ${hit.charStart}`)
         .fontSize(11)
-        .fontColor('#8A8A8E')
+        .fontColor(UiTheme.TextSubtle)
         .width('100%')
         .margin({ top: 6 })
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
-    .backgroundColor('#FFFFFF')
-    .borderRadius(12)
-    .padding(12)
+    .backgroundColor(UiTheme.Card)
+    .border({ width: 1, color: UiTheme.Border })
+    .borderRadius(16)
+    .padding(13)
+    .shadow({ radius: 12, color: UiTheme.ShadowColor, offsetX: 0, offsetY: 3 })
   }
 
   private openPreview(doc: KnowledgeDoc): void {
@@ -242,23 +248,23 @@ export struct KnowledgeView {
           Text(doc.title)
             .fontSize(15)
             .fontWeight(FontWeight.Medium)
-            .fontColor('#1A1A1A')
+            .fontColor(UiTheme.TextPrimary)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .layoutWeight(1)
           Text(this.sourceLabel(doc.source))
             .fontSize(10)
-            .fontColor(doc.source === DocSource.Sample ? '#5B7CFA' : '#10A37F')
-            .backgroundColor(doc.source === DocSource.Sample ? '#EEF2FF' : '#E8F7F1')
-            .borderRadius(4)
-            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .fontColor(doc.source === DocSource.Sample ? UiTheme.Accent : UiTheme.Success)
+            .backgroundColor(doc.source === DocSource.Sample ? UiTheme.AccentSoft : UiTheme.SuccessSoft)
+            .borderRadius(5)
+            .padding({ left: 7, right: 7, top: 2, bottom: 2 })
             .margin({ left: 8 })
         }
         .width('100%')
         .alignItems(VerticalAlign.Center)
         Text(`${doc.chunkCount} 分块 · ${doc.charCount} 字 · ${this.formatTime(doc.createdAt)}`)
           .fontSize(11)
-          .fontColor('#8A8A8E')
+          .fontColor(UiTheme.TextSubtle)
           .width('100%')
           .margin({ top: 6 })
       }
@@ -266,17 +272,21 @@ export struct KnowledgeView {
       .layoutWeight(1)
       Text('删除')
         .fontSize(12)
-        .fontColor('#E84026')
-        .padding({ left: 10, right: 4, top: 6, bottom: 6 })
+        .fontColor(UiTheme.Danger)
+        .backgroundColor(UiTheme.DangerSoft)
+        .borderRadius(9)
+        .padding({ left: 10, right: 10, top: 5, bottom: 5 })
         .onClick(() => {
           this.onRemoveDoc(doc.id);
         })
     }
     .width('100%')
     .alignItems(VerticalAlign.Center)
-    .backgroundColor('#FFFFFF')
-    .borderRadius(12)
-    .padding({ left: 12, right: 4, top: 10, bottom: 10 })
+    .backgroundColor(UiTheme.Card)
+    .border({ width: 1, color: UiTheme.Border })
+    .borderRadius(16)
+    .padding({ left: 13, right: 10, top: 11, bottom: 11 })
+    .shadow({ radius: 12, color: UiTheme.ShadowColor, offsetX: 0, offsetY: 3 })
     .onClick(() => {
       this.openPreview(doc);
     })
@@ -285,29 +295,16 @@ export struct KnowledgeView {
   build() {
     Stack({ alignContent: Alignment.Top }) {
       Column() {
-        if (!this.embedded) {
-        Row() {
-          Text('知识库')
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#FFFFFF')
-            .layoutWeight(1)
-            .textAlign(TextAlign.Start)
-          Text('检索后端:本地关键词')
-            .fontSize(11)
-            .fontColor('#D9E4FF')
-        }
-        .width('100%')
-        .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-        .backgroundColor('#0A59F7')
-        .alignItems(VerticalAlign.Center)
-      }
-
       Row({ space: 8 }) {
         TextInput({ placeholder: '检索知识库,如:引用溯源', text: this.query })
           .layoutWeight(1)
-          .height(40)
-          .fontSize(14)
+          .height(42)
+          .fontSize(15)
+          .fontColor(UiTheme.TextPrimary)
+          .placeholderColor('#7A8699')
+          .backgroundColor(UiTheme.Card)
+          .border({ width: 1, color: '#C3CDDF' })
+          .borderRadius(21)
           .onChange((value: string) => {
             this.query = value;
           })
@@ -315,45 +312,58 @@ export struct KnowledgeView {
             this.onSearch();
           })
         Button(this.searching ? '…' : '检索')
-          .height(40)
-          .enabled(!this.searching)
-          .backgroundColor('#0A59F7')
+          .height(42)
+          .fontSize(15)
           .fontColor('#FFFFFF')
+          .backgroundColor('#4C6EF5')
+          .borderRadius(21)
+          .enabled(!this.searching)
           .onClick(() => {
             this.onSearch();
           })
       }
       .width('100%')
-      .padding({ left: 12, right: 12, top: 10 })
-      .backgroundColor('#F1F3F5')
+      .padding({ left: 12, right: 12, top: 12, bottom: 4 })
+      .backgroundColor(UiTheme.Bg)
 
       if (this.tip.length > 0) {
         Text(this.tip)
           .fontSize(12)
-          .fontColor('#E84026')
+          .fontColor(UiTheme.Danger)
           .width('100%')
-          .padding({ left: 16, right: 16, top: 6 })
-          .backgroundColor('#F1F3F5')
+          .padding({ left: 16, right: 16, top: 8 })
+          .backgroundColor(UiTheme.Bg)
       }
 
       List({ space: 10 }) {
         if (this.hits.length > 0) {
           ListItem() {
             Row() {
-              Text(`检索结果(${this.hits.length})`)
+              Text('检索结果')
                 .fontSize(13)
                 .fontWeight(FontWeight.Medium)
-                .fontColor('#5A5A5E')
-                .layoutWeight(1)
+                .fontColor(UiTheme.TextPrimary)
+              Text(`${this.hits.length}`)
+                .fontSize(11)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(UiTheme.Accent)
+                .backgroundColor(UiTheme.AccentSoft)
+                .borderRadius(8)
+                .padding({ left: 7, right: 7, top: 2, bottom: 2 })
+                .margin({ left: 6 })
               Text('清除')
                 .fontSize(12)
-                .fontColor('#0A59F7')
+                .fontColor(UiTheme.TextSubtle)
+                .backgroundColor('#F1F4FA')
+                .borderRadius(9)
+                .padding({ left: 10, right: 10, top: 4, bottom: 4 })
                 .onClick(() => {
                   this.clearResults();
                 })
             }
             .width('100%')
             .justifyContent(FlexAlign.SpaceBetween)
+            .alignItems(VerticalAlign.Center)
             .padding({ left: 2, right: 2, top: 4, bottom: 2 })
           }
           ForEach(this.hits, (hit: RetrievalHit) => {
@@ -365,38 +375,51 @@ export struct KnowledgeView {
 
         ListItem() {
           Row() {
-            Text(`知识文档 (${this.docs.length})`)
+            Text('知识文档')
               .fontSize(13)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#5A5A5E')
-            if (this.docs.length > 0) {
-              Text('点击文档标题区右侧删除')
-                .fontSize(11)
-                .fontColor('#B0B0B4')
-                .margin({ left: 8 })
-            }
+              .fontColor(UiTheme.TextPrimary)
+            Text(`${this.docs.length}`)
+              .fontSize(11)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(UiTheme.Accent)
+              .backgroundColor(UiTheme.AccentSoft)
+              .borderRadius(8)
+              .padding({ left: 7, right: 7, top: 2, bottom: 2 })
+              .margin({ left: 6 })
           }
           .width('100%')
-          .justifyContent(FlexAlign.SpaceBetween)
+          .justifyContent(FlexAlign.Start)
           .padding({ left: 2, right: 2, top: 8, bottom: 2 })
         }
 
         if (this.docs.length === 0) {
           ListItem() {
             Column() {
+              Text('文')
+                .fontSize(26)
+                .fontColor(UiTheme.Accent)
+                .fontWeight(FontWeight.Medium)
+                .backgroundColor(UiTheme.AccentSoft)
+                .width(72)
+                .height(72)
+                .textAlign(TextAlign.Center)
+                .borderRadius(36)
               Text('知识库为空')
                 .fontSize(16)
                 .fontWeight(FontWeight.Medium)
-                .fontColor('#6A6A6E')
-              Text('点击下方「恢复示例文档」一键导入演示资料,或「导入文档」从本地选择 md/txt 文件')
+                .fontColor(UiTheme.TextSecondary)
+                .margin({ top: 14 })
+              Text('点击「恢复示例文档」一键导入演示资料,或「导入文档」从本地选择 md/txt 文件')
                 .fontSize(12)
-                .fontColor('#9A9A9E')
+                .fontColor(UiTheme.TextSubtle)
                 .textAlign(TextAlign.Center)
                 .margin({ top: 8 })
-                .padding({ left: 24, right: 24 })
+                .padding({ left: 28, right: 28 })
             }
             .width('100%')
-            .padding({ top: 40, bottom: 40 })
+            .alignItems(HorizontalAlign.Center)
+            .padding({ top: 36, bottom: 36 })
           }
         }
 
@@ -415,31 +438,34 @@ export struct KnowledgeView {
         Button(this.importing ? '处理中…' : '恢复示例文档')
           .layoutWeight(1)
           .height(44)
+          .fontSize(15)
           .enabled(!this.importing)
-          .backgroundColor('#FFFFFF')
-          .fontColor('#0A59F7')
-          .borderWidth(1)
-          .borderColor('#0A59F7')
+          .backgroundColor(UiTheme.Card)
+          .fontColor(UiTheme.Accent)
+          .border({ width: 1, color: UiTheme.BorderStrong })
+          .borderRadius(22)
           .onClick(() => {
             this.onSeedSamples();
           })
         Button(this.importing ? '处理中…' : '导入文档')
           .layoutWeight(1)
           .height(44)
+          .fontSize(15)
           .enabled(!this.importing)
-          .backgroundColor('#0A59F7')
+          .backgroundColor('#4C6EF5')
           .fontColor('#FFFFFF')
+          .borderRadius(22)
           .onClick(() => {
             this.onPickFile();
           })
       }
       .width('100%')
-      .padding({ left: 12, right: 12, top: 8, bottom: 12 })
-      .backgroundColor('#F1F3F5')
+      .padding({ left: 12, right: 12, top: 6, bottom: 12 })
+      .backgroundColor(UiTheme.Bg)
       }
       .width('100%')
       .height('100%')
-      .backgroundColor('#F1F3F5')
+      .backgroundColor(UiTheme.Bg)
 
       if (this.previewVisible) {
         Column() {
@@ -448,14 +474,16 @@ export struct KnowledgeView {
               Text(this.previewTitle)
                 .fontSize(16)
                 .fontWeight(FontWeight.Bold)
-                .fontColor('#1A1A1A')
+                .fontColor(UiTheme.TextPrimary)
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .layoutWeight(1)
               Text('关闭')
                 .fontSize(13)
-                .fontColor('#0A59F7')
-                .padding({ left: 12, top: 4, bottom: 4 })
+                .fontColor(UiTheme.TextSecondary)
+                .backgroundColor('#F1F4FA')
+                .borderRadius(10)
+                .padding({ left: 12, right: 12, top: 5, bottom: 5 })
                 .onClick(() => {
                   this.closePreview();
                 })
@@ -467,8 +495,8 @@ export struct KnowledgeView {
             Scroll() {
               Text(this.previewContent)
                 .fontSize(14)
-                .fontColor('#333336')
-                .lineHeight(22)
+                .fontColor('#3A3F47')
+                .lineHeight(23)
                 .width('100%')
                 .copyOption(CopyOptions.LocalDevice)
             }
@@ -477,16 +505,17 @@ export struct KnowledgeView {
             .align(Alignment.TopStart)
           }
           .width('92%')
-          .height('78%')
-          .backgroundColor('#FFFFFF')
-          .borderRadius(16)
-          .padding(16)
+          .height('80%')
+          .backgroundColor(UiTheme.Card)
+          .borderRadius(20)
+          .padding(18)
+          .shadow({ radius: 24, color: 'rgba(16,20,32,0.18)', offsetX: 0, offsetY: 8 })
         }
         .width('100%')
         .height('100%')
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
-        .backgroundColor('#80000000')
+        .backgroundColor('rgba(16,20,32,0.5)')
       }
     }
     .width('100%')

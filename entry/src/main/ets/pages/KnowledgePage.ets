@@ -1,20 +1,21 @@
 import { KeyboardAvoidMode } from '@kit.ArkUI';
 import { KnowledgeView } from '../common/KnowledgeView';
+import { UiTheme } from '../common/UiTheme';
 
 @Entry
 @Component
 struct KnowledgePage {
   aboutToAppear(): void {
     try {
-      // 键盘弹出时压缩内容区,避免顶部标题栏被顶出屏幕
-      this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.RESIZE);
+      // 禁止系统整体上抬避让,避免顶部返回栏被顶出屏幕
+      this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.NONE);
     } catch (err) {
     }
   }
 
   aboutToDisappear(): void {
     try {
-      this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.OFFSET);
+      this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.NONE);
     } catch (err) {
     }
   }
@@ -22,10 +23,13 @@ struct KnowledgePage {
   build() {
     Column() {
       Row() {
-        Text('‹ 返回')
-          .fontSize(15)
+        Text('‹')
+          .fontSize(30)
           .fontColor('#FFFFFF')
-          .padding({ top: 6, bottom: 6, right: 10 })
+          .width(34)
+          .height(30)
+          .textAlign(TextAlign.Center)
+          .offset({ y: -2 })
           .onClick(() => {
             this.getUIContext().getRouter().back();
           })
@@ -37,8 +41,8 @@ struct KnowledgePage {
           .textAlign(TextAlign.Start)
       }
       .width('100%')
-      .padding({ left: 12, right: 12, top: 14, bottom: 14 })
-      .backgroundColor('#0A59F7')
+      .padding({ left: 10, right: 12, top: 14, bottom: 14 })
+      .linearGradient({ angle: 135, colors: [[UiTheme.HdrA, 0.0], [UiTheme.HdrB, 1.0]] })
       .alignItems(VerticalAlign.Center)
 
       KnowledgeView({ embedded: false })
@@ -46,6 +50,6 @@ struct KnowledgePage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F1F3F5')
+    .backgroundColor(UiTheme.Bg)
   }
 }
