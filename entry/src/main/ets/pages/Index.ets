@@ -29,6 +29,8 @@ struct Index {
   @State agentRunning: boolean = false;
   @State agentTitle: string = '';
   @State isWide: boolean = false;
+  @State knowledgeVisible: boolean = true;
+  @State paneWv: number = 0;
   private wideListener: mediaquery.MediaQueryListener | undefined = undefined;
   @State agentSteps: AgentStep[] = [];
   @State streamingText: string = '';
@@ -63,7 +65,7 @@ struct Index {
         '· 日程管家:如「明天下午3点开组会提醒我」\n' +
         '· 文档处理:点输入框右侧「+」选图/拍照→OCR→总结\n' +
         '· 语音输入:点输入框左侧的麦克风按钮\n' +
-        '点右上角「知识库」可管理文档。');
+        '点右上角书本图标可管理/展开收起知识库(平板端点击即在右侧切换)');
       this.appendMessage(greeting);
     }
   }
@@ -128,6 +130,7 @@ struct Index {
       // 单栏取约 82% 屏宽,双栏左列约 50% 屏宽
       const cap: number = this.isWide ? widthVp * 0.5 : widthVp * 0.82;
       this.bubbleCapVp = Math.floor(cap);
+      this.paneWv = Math.floor(widthVp * 0.36);
     } catch (err) {
     }
   }
@@ -181,6 +184,16 @@ struct Index {
       } catch (err) {
       }
     }, 80);
+  }
+
+  private toggleKnowledge(): void {
+    if (this.isWide) {
+      this.getUIContext().animateTo({ duration: 280, curve: Curve.EaseOut }, (): void => {
+        this.knowledgeVisible = !this.knowledgeVisible;
+      });
+    } else {
+      this.openKnowledge();
+    }
   }
 
   private openKnowledge(): void {
@@ -735,9 +748,8 @@ struct Index {
       KnowledgeView({ embedded: true })
         .layoutWeight(1)
     }
-    .width('38%')
+    .width('100%')
     .height('100%')
-    .border({ width: { left: 1 }, color: UiTheme.Border })
     .backgroundColor(UiTheme.Bg)
   }
 
@@ -756,16 +768,19 @@ struct Index {
         }
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
-        Text('知识库')
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#FFFFFF')
-          .backgroundColor('rgba(255,255,255,0.18)')
-          .borderRadius(17)
-          .padding({ left: 14, right: 14, top: 7, bottom: 7 })
-          .onClick(() => {
-            this.openKnowledge();
-          })
+        Button() {
+          Image($r('app.media.ic_book'))
+            .width(22)
+            .height(22)
+            .objectFit(ImageFit.Contain)
+        }
+        .width(38)
+        .height(38)
+        .type(ButtonType.Circle)
+        .backgroundColor('rgba(255,255,255,0.18)')
+        .onClick(() => {
+          this.toggleKnowledge();
+        })
       }
       .width('100%')
       .padding({ left: 18, right: 16, top: 16, bottom: 15 })
@@ -779,7 +794,14 @@ struct Index {
           }
           .layoutWeight(1)
           .height('100%')
-          this.KnowledgePane()
+          Column() {
+            this.KnowledgePane()
+          }
+          .width(this.knowledgeVisible ? this.paneWv : 0)
+          .height('100%')
+          .backgroundColor(UiTheme.Bg)
+          .border({ width: { left: 1 }, color: UiTheme.Border })
+          .clip(true)
         }
         .width('100%')
         .layoutWeight(1)
