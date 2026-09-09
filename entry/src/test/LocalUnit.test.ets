@@ -2,6 +2,8 @@ import { describe, beforeEach, it, expect } from '@ohos/hypium';
 import { KnowledgeChunk } from '../main/ets/model/KnowledgeModels';
 import { TextChunker } from '../main/ets/knowledge/TextChunker';
 import { SensitiveWordFilter, SensitiveHit } from '../main/ets/knowledge/SensitiveWordFilter';
+import { Bm25Ranker } from '../main/ets/provider/retrieval/Bm25Ranker';
+import { RetrievalHit } from '../main/ets/model/KnowledgeModels';
 
 export default function localUnitTest() {
   describe('TextChunker', () => {
@@ -123,6 +125,117 @@ export default function localUnitTest() {
       SensitiveWordFilter.addWord('   ');
       SensitiveWordFilter.addWord('');
       expect(SensitiveWordFilter.wordCount()).assertEqual(before);
+    });
+  });
+
+  describe('Bm25Ranker', () => {
+    const titleOf = (map: Map<string, string>, id: string): string => {
+      return map.get(id) ?? '';
+    };
+
+    it('queryHits_relevantDoc_ranksFirst', 0, () => {
+      const docA: string = '检索增强生成与引用溯源:RAG 回答必须标注使用了哪些资料,并在文末附上引用来源。';
+      const docB: string = '日程管家可以把自然语言里的时间抽出来,写入系统日历并设置提前提醒。';
+      const chunks: KnowledgeChunk[] = [];
+      const docAChunks: KnowledgeChunk[] = TextChunker.buildChunks('docA', docA);
+      const docBChunks: KnowledgeChunk[] = TextChunker.buildChunks('docB', docB);
+      for (let i = 0; i < docAChunks.length; i++) {
+        chunks.push(docAChunks[i]);
+      }
+      for (let i = 0; i < docBChunks.length; i++) {
+        chunks.push(docBChunks[i]);
+      }
+      const titles: Map<string, string> = new Map<string, string>();
+      titles.set('docA', '文档A-引用溯源');
+      titles.set('docB', '文档B-日程');
+      const hits: RetrievalHit[] = Bm25Ranker.rank('什么是引用溯源', 3, chunks,
+        (docId: string): string => titleOf(titles, docId));
+      expect(hits.length > 0).assertTrue();
+      expect(hits[0].docTitle).assertEqual('文档A-引用溯源');
+    });
+
+    it('termFrequency_ranksDenseDocFirst', 0, () => {
+      const base: string = '栈是一种先进后出的数据结构,支持压栈与弹栈操作。';
+      const docA: string = '今天课程提到一种叫栈的数据结构,仅此一句。';
+      const docB: string = `${base}${base}${base}${base}${base}`;
+      const chunks: KnowledgeChunk[] = [];
+      const docAChunks: KnowledgeChunk[] = TextChunker.buildChunks('docA', docA);
+      const docBChunks: KnowledgeChunk[] = TextChunker.buildChunks('docB', docB);
+      for (let i = 0; i < docAChunks.length; i++) {
+        chunks.push(docAChunks[i]);
+      }
+      for (let i = 0; i < docBChunks.length; i++) {
+        chunks.push(docBChunks[i]);
+      }
+      const titles: Map<string, string> = new Map<string, string>();
+      titles.set('docA', '文档A');
+      titles.set('docB', '文档B');
+      const hits: RetrievalHit[] = Bm25Ranker.rank('栈', 5, chunks,
+        (docId: string): string => titleOf(titles, docId));
+      expect(hits.length).assertEqual(2);
+      expect(hits[0].docTitle).assertEqual('文档B');
+    });
+
+    it('topK_limitsResults', 0, () => {
+      const text: string = '学习助手会检索知识库并回答。';
+      const chunks: KnowledgeChunk[] = [];
+      for (let i = 0; i < 3; i++) {
+        const docChunks: KnowledgeChunk[] = TextChunker.buildChunks(`doc${i}`, text);
+        for (let j = 0; j < docChunks.length; j++) {
+          chunks.push(docChunks[j]);
+        }
+      }
+      const titles: Map<string, string> = new Map<string, string>();
+      titles.set('doc0', '文档0');
+      titles.set('doc1', '文档1');
+      titles.set('doc2', '文档2');
+      const hits: RetrievalHit[] = Bm25Ranker.rank('知识库', 2, chunks,
+        (docId: string): string => titleOf(titles, docId));
+      expect(hits.length).assertEqual(2);
+      expect(hits[0].score >= hits[1].score).assertTrue();
+    });
+
+    it('emptyChunks_returnsEmpty', 0, () => {
+      const titles: Map<string, string> = new Map<string, string>();
+      const hits: RetrievalHit[] = Bm25Ranker.rank('检索', 3, [],
+        (docId: string): string => titleOf(titles, docId));
+      expect(hits.length).assertEqual(0);
+    });
+
+    it('snippet_anchorsInsideMatchedChunk_withDocOffset', 0, () => {
+      const content: string = '第一段内容。\n\n第二段讲到了量子计算的优势与原理。';
+      const chunks: KnowledgeChunk[] = TextChunker.buildChunks('docQ', content);
+      expect(chunks.length).assertEqual(2);
+      const titles: Map<string, string> = new Map<string, string>();
+      titles.set('docQ', '文档Q');
+      const hits: RetrievalHit[] = Bm25Ranker.rank('量子计算', 3, chunks,
+        (docId: string): string => titleOf(titles, docId));
+      expect(hits.length).assertEqual(1);
+      expect(hits[0].chunkIndex).assertEqual(1);
+      expect(hits[0].charStart >= chunks[1].charStart).assertTrue();
+      expect(hits[0].snippet.indexOf('量子') >= 0).assertTrue();
+    });
+
+    it('numericTimestampTitle_notBoostedOverPlainTitle', 0, () => {
+      // 回归:纯数字时间戳标题("识别文档_20260910")不得因标题含数字子串拿到加分,
+      // 与同名内容文档并列时应保持插入顺序,而非被"标题含1"顶到前面
+      const shared: string = '课程编号 1 表示入门内容。';
+      const chunks: KnowledgeChunk[] = [];
+      const plainChunks: KnowledgeChunk[] = TextChunker.buildChunks('docB', shared);
+      const numChunks: KnowledgeChunk[] = TextChunker.buildChunks('docA', shared);
+      for (let i = 0; i < plainChunks.length; i++) {
+        chunks.push(plainChunks[i]);
+      }
+      for (let i = 0; i < numChunks.length; i++) {
+        chunks.push(numChunks[i]);
+      }
+      const titles: Map<string, string> = new Map<string, string>();
+      titles.set('docA', '识别文档_20260910');
+      titles.set('docB', '普通文档');
+      const hits: RetrievalHit[] = Bm25Ranker.rank('1', 3, chunks,
+        (docId: string): string => titleOf(titles, docId));
+      expect(hits.length).assertEqual(2);
+      expect(hits[0].docTitle).assertEqual('普通文档');
     });
   });
 }

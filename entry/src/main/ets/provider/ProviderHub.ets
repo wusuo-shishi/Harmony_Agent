@@ -5,7 +5,7 @@ import { DeepSeekLlmProvider } from './llm/DeepSeekLlmProvider';
 import { LlmConfig } from './llm/LlmConfig';
 import { CapabilityManager } from '../core/CapabilityManager';
 import { RetrievalProvider } from './retrieval/RetrievalProvider';
-import { LocalKeywordRetrieval } from './retrieval/LocalKeywordRetrieval';
+import { Bm25Retrieval } from './retrieval/Bm25Retrieval';
 import { DagRetrievalProvider } from './retrieval/DagRetrievalProvider';
 import { RetrievalConfig } from './retrieval/RetrievalConfig';
 
@@ -18,7 +18,7 @@ export enum LlmBackend {
 export class ProviderHub {
   static backend: LlmBackend = LlmBackend.Mock;
   private static llm: LLMProvider = new MockLLMProvider();
-  private static retrieval: RetrievalProvider = new LocalKeywordRetrieval();
+  private static retrieval: RetrievalProvider = new Bm25Retrieval();
 
   static initFromConfig(): void {
     if (LlmConfig.ENABLE_DEEPSEEK && LlmConfig.DEEPSEEK_API_KEY.length > 0) {
@@ -59,7 +59,7 @@ export class ProviderHub {
   }
 
   static useLocalRetrieval(): void {
-    ProviderHub.retrieval = new LocalKeywordRetrieval();
+    ProviderHub.retrieval = new Bm25Retrieval();
   }
 
   static useDagRetrieval(): void {
@@ -67,7 +67,7 @@ export class ProviderHub {
     if (dag.available()) {
       ProviderHub.retrieval = dag;
     } else {
-      ProviderHub.retrieval = new LocalKeywordRetrieval();
+      ProviderHub.retrieval = new Bm25Retrieval();
     }
   }
 

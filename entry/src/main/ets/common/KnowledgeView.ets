@@ -4,7 +4,7 @@ import { DocSource, KnowledgeDoc, RetrievalHit } from '../model/KnowledgeModels'
 import { KnowledgeStore } from '../knowledge/KnowledgeStore';
 import { SensitiveWordFilter } from '../knowledge/SensitiveWordFilter';
 import { RetrievalProvider } from '../provider/retrieval/RetrievalProvider';
-import { LocalKeywordRetrieval } from '../provider/retrieval/LocalKeywordRetrieval';
+import { Bm25Retrieval } from '../provider/retrieval/Bm25Retrieval';
 import { ProviderHub } from '../provider/ProviderHub';
 import { RetrievalConfig } from '../provider/retrieval/RetrievalConfig';
 
@@ -93,7 +93,7 @@ export struct KnowledgeView {
     try {
       const provider: RetrievalProvider = ProviderHub.retrievalProvider();
       if (!provider.available()) {
-        this.tip = '真机高级检索能力未就绪,本次使用本地关键词检索';
+        this.tip = '真机高级检索能力未就绪,本次使用本地 BM25 检索';
       }
       const results: RetrievalHit[] = await provider.retrieve(q, RetrievalConfig.DEFAULT_TOP_K);
       if (results.length === 0) {
@@ -103,10 +103,10 @@ export struct KnowledgeView {
       }
     } catch (err) {
       try {
-        const local: RetrievalProvider = new LocalKeywordRetrieval();
+        const local: RetrievalProvider = new Bm25Retrieval();
         const fallback: RetrievalHit[] = await local.retrieve(q, RetrievalConfig.DEFAULT_TOP_K);
         this.hits = fallback;
-        this.tip = fallback.length > 0 ? '主检索异常,已降级本地关键词检索' : '未命中相关文档,可换关键词或先导入更多资料';
+        this.tip = fallback.length > 0 ? '主检索异常,已降级本地 BM25 检索' : '未命中相关文档,可换关键词或先导入更多资料';
       } catch (fallbackErr) {
         this.tip = '检索失败,请重试';
       }
