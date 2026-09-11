@@ -11,6 +11,9 @@ export class PanguLlmProvider implements LLMProvider {
     this.endpoint = endpoint;
   }
 
+  cancelActive(): void {
+  }
+
   async chat(messages: ChatMessage[]): Promise<string> {
     throw new Error('Pangu LLM 尚未配置:请先开通华为云 ModelArts Studio 并通过 configure() 填入凭证与接入点。');
   }

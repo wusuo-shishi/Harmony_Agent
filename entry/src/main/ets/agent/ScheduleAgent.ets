@@ -6,11 +6,13 @@ import { MemoryScheduleProvider } from '../provider/schedule/MemoryScheduleProvi
 import { LLMProvider } from '../provider/llm/LLMProvider';
 import { ChatMessage, ChatRole } from '../model/ChatModels';
 
+export type ScheduleConfirmHandler = (draft: ScheduleDraft) => Promise<boolean>;
+
 export class ScheduleAgent {
   readonly agentName: string = '日程管家';
 
   async run(query: string, llm: LLMProvider, schedule: ScheduleProvider | undefined,
-    onStep: StepListener): Promise<AgentRunResult> {
+    onStep: StepListener, confirm?: ScheduleConfirmHandler): Promise<AgentRunResult> {
     const result: AgentRunResult = new AgentRunResult();
     result.kind = AgentKind.Schedule;
     result.agentName = this.agentName;
@@ -31,21 +33,45 @@ export class ScheduleAgent {
         onStep(steps);
         return result;
       }
-      return await this.doAdd(query, fallback.draft, schedule, steps, onStep, result);
+      return await this.doAdd(query, fallback.draft, schedule, steps, onStep, result, confirm);
     }
-    return await this.doAdd(query, parsed.draft, schedule, steps, onStep, result);
+    return await this.doAdd(query, parsed.draft, schedule, steps, onStep, result, confirm);
   }
 
   private async doAdd(query: string, draft: ScheduleDraft, schedule: ScheduleProvider | undefined,
-    steps: AgentStep[], onStep: StepListener, result: AgentRunResult): Promise<AgentRunResult> {
+    steps: AgentStep[], onStep: StepListener, result: AgentRunResult,
+    confirm?: ScheduleConfirmHandler): Promise<AgentRunResult> {
     steps.push(AgentStep.of('2. 抽取时间与事项'));
     steps[steps.length - 1].detail =
       `事项「${draft.title}」 ${formatScheduleTime(draft.startTime)} 起(默认 1 小时)`;
     steps[steps.length - 1].state = StepState.Done;
     onStep(steps);
 
+    if (confirm !== undefined && !(await confirm(draft))) {
+      steps.push(AgentStep.of('3. 等待用户确认'));
+      steps[steps.length - 1].state = StepState.Failed;
+      steps[steps.length - 1].detail = '用户取消创建';
+      result.answer = `已取消创建日程「${draft.title}」。`;
+      result.steps = steps;
+      onStep(steps);
+      return result;
+    }
+
     const provider: ScheduleProvider = schedule ?? new MemoryScheduleProvider();
-    steps.push(AgentStep.of(`3. 写入日程(${provider.providerName})`));
+    const existing: string[] = await provider.listEvents();
+    const scheduleTime: string = formatScheduleTime(draft.startTime);
+    for (let i = 0; i < existing.length; i++) {
+      if (existing[i].indexOf(scheduleTime) >= 0 && existing[i].indexOf(draft.title) >= 0) {
+        steps.push(AgentStep.of('3. 检查重复日程'));
+        steps[steps.length - 1].state = StepState.Failed;
+        steps[steps.length - 1].detail = '发现相同时间和标题的日程';
+        result.answer = `未重复创建:「${draft.title}」在 ${formatScheduleTime(draft.startTime)} 已存在。`;
+        result.steps = steps;
+        onStep(steps);
+        return result;
+      }
+    }
+    steps.push(AgentStep.of(`4. 写入日程(${provider.providerName})`));
     onStep(steps);
     try {
       const msg: string = await provider.addEvent(draft);

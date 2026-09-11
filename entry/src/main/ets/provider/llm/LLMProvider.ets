@@ -6,4 +6,5 @@ export interface LLMProvider {
   readonly providerName: string;
   chat(messages: ChatMessage[]): Promise<string>;
   streamChat(messages: ChatMessage[], onDelta: ChatDeltaHandler): Promise<string>;
+  cancelActive(): void;
 }

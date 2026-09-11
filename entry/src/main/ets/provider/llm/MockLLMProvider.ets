@@ -3,16 +3,25 @@ import { LLMProvider, ChatDeltaHandler } from './LLMProvider';
 
 export class MockLLMProvider implements LLMProvider {
   readonly providerName: string = 'Mock';
+  private cancelled: boolean = false;
+
+  cancelActive(): void {
+    this.cancelled = true;
+  }
 
   async chat(messages: ChatMessage[]): Promise<string> {
     return this.buildReply(messages);
   }
 
   async streamChat(messages: ChatMessage[], onDelta: ChatDeltaHandler): Promise<string> {
+    this.cancelled = false;
     const full: string = this.buildReply(messages);
     const step: number = 6;
     let i: number = 0;
     while (i < full.length) {
+      if (this.cancelled) {
+        return '';
+      }
       const end: number = Math.min(full.length, i + step);
       onDelta(full.substring(i, end));
       i = end;

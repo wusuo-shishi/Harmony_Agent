@@ -10,6 +10,7 @@ export class KnowledgeDoc {
   createdAt: number = 0;
   charCount: number = 0;
   chunkCount: number = 0;
+  folderId: string = '';
 
   static of(id: string, title: string, source: DocSource, createdAt: number): KnowledgeDoc {
     const doc = new KnowledgeDoc();
@@ -18,6 +19,24 @@ export class KnowledgeDoc {
     doc.source = source;
     doc.createdAt = createdAt;
     return doc;
+  }
+}
+
+export class KnowledgeFolder {
+  id: string = '';
+  parentId: string = '';
+  name: string = '';
+  createdAt: number = 0;
+  updatedAt: number = 0;
+
+  static of(id: string, parentId: string, name: string, createdAt: number): KnowledgeFolder {
+    const folder = new KnowledgeFolder();
+    folder.id = id;
+    folder.parentId = parentId;
+    folder.name = name;
+    folder.createdAt = createdAt;
+    folder.updatedAt = createdAt;
+    return folder;
   }
 }
 
@@ -66,4 +85,13 @@ export interface KnowledgeDocRecord {
   source: string;
   createdAt: number;
   content: string;
+  folderId?: string;
+}
+
+export interface KnowledgeFolderRecord {
+  id: string;
+  parentId: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
 }

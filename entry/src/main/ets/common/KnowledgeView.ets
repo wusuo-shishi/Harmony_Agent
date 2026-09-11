@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { picker } from '@kit.CoreFileKit';
-import { DocSource, KnowledgeDoc, RetrievalHit } from '../model/KnowledgeModels';
+import { DocSource, KnowledgeDoc, KnowledgeFolder, RetrievalHit } from '../model/KnowledgeModels';
 import { KnowledgeStore } from '../knowledge/KnowledgeStore';
 import { SensitiveWordFilter } from '../knowledge/SensitiveWordFilter';
 import { RetrievalProvider } from '../provider/retrieval/RetrievalProvider';
@@ -8,6 +8,10 @@ import { Bm25Retrieval } from '../provider/retrieval/Bm25Retrieval';
 import { ProviderHub } from '../provider/ProviderHub';
 import { RetrievalConfig } from '../provider/retrieval/RetrievalConfig';
 import { UiTheme } from './UiTheme';
+
+interface KnowledgeDialogResult {
+  index: number;
+}
 
 @Component
 export struct KnowledgeView {
@@ -20,6 +24,18 @@ export struct KnowledgeView {
   @State previewTitle: string = '';
   @State previewContent: string = '';
   @State previewVisible: boolean = false;
+  @State folders: KnowledgeFolder[] = [];
+  @State currentFolderId: string = '';
+  @State folderPath: string = '我的知识库';
+  @State newFolderName: string = '';
+  @State creatingFolder: boolean = false;
+  @State searchAllFolders: boolean = false;
+  @State manageVisible: boolean = false;
+  @State manageKind: string = '';
+  @State manageId: string = '';
+  @State manageName: string = '';
+  @State moveVisible: boolean = false;
+  @State destinations: KnowledgeFolder[] = [];
   @Prop embedded: boolean = false;
   private store: KnowledgeStore = KnowledgeStore.shared;
 
@@ -44,7 +60,144 @@ export struct KnowledgeView {
         return;
       }
     }
-    this.docs = this.store.listDocs();
+    this.refreshCurrentFolder();
+  }
+
+  private refreshCurrentFolder(): void {
+    this.docs = this.store.listDocsInFolder(this.currentFolderId);
+    this.folders = this.store.listFolders(this.currentFolderId);
+    this.folderPath = this.store.folderPath(this.currentFolderId);
+  }
+
+  private enterFolder(folder: KnowledgeFolder): void {
+    this.currentFolderId = folder.id;
+    this.clearResults();
+    this.refreshCurrentFolder();
+  }
+
+  private goParentFolder(): void {
+    if (this.currentFolderId.length === 0) {
+      return;
+    }
+    const all: KnowledgeFolder[] = this.store.allFolders();
+    for (let i = 0; i < all.length; i++) {
+      if (all[i].id === this.currentFolderId) {
+        this.currentFolderId = all[i].parentId;
+        break;
+      }
+    }
+    this.clearResults();
+    this.refreshCurrentFolder();
+  }
+
+  private createFolder(): void {
+    try {
+      this.store.createFolder(this.newFolderName, this.currentFolderId);
+      this.newFolderName = '';
+      this.creatingFolder = false;
+      this.refreshCurrentFolder();
+      this.showToast('文件夹已创建');
+    } catch (err) {
+      this.showToast(err instanceof Error ? err.message : '创建文件夹失败');
+    }
+  }
+
+  private removeFolder(folderId: string): void {
+    try {
+      this.store.removeFolder(folderId);
+      this.refreshCurrentFolder();
+      this.showToast('文件夹已删除');
+    } catch (err) {
+      this.showToast(err instanceof Error ? err.message : '删除文件夹失败');
+    }
+  }
+
+  private manageFolder(folder: KnowledgeFolder): void {
+    this.manageKind = 'folder';
+    this.manageId = folder.id;
+    this.manageName = folder.name;
+    this.destinations = this.store.allFolders();
+    this.moveVisible = false;
+    this.manageVisible = true;
+  }
+
+  private manageDoc(doc: KnowledgeDoc): void {
+    this.manageKind = 'doc';
+    this.manageId = doc.id;
+    this.manageName = doc.title;
+    this.destinations = this.store.allFolders();
+    this.moveVisible = false;
+    this.manageVisible = true;
+  }
+
+  private closeManage(): void {
+    this.manageVisible = false;
+    this.moveVisible = false;
+    this.manageId = '';
+    this.manageName = '';
+  }
+
+  private renameManaged(): void {
+    try {
+      if (this.manageKind === 'folder') {
+        this.store.renameFolder(this.manageId, this.manageName);
+      } else {
+        this.store.renameDoc(this.manageId, this.manageName);
+      }
+      this.refreshCurrentFolder();
+      this.closeManage();
+      this.showToast('名称已更新');
+    } catch (err) {
+      this.showToast(err instanceof Error ? err.message : '重命名失败');
+    }
+  }
+
+  private moveManaged(targetFolderId: string): void {
+    try {
+      if (this.manageKind === 'folder') {
+        this.store.moveFolder(this.manageId, targetFolderId);
+      } else {
+        this.store.moveDoc(this.manageId, targetFolderId);
+      }
+      this.refreshCurrentFolder();
+      this.closeManage();
+      this.showToast('已移动到目标文件夹');
+    } catch (err) {
+      this.showToast(err instanceof Error ? err.message : '移动失败');
+    }
+  }
+
+  private async deleteManaged(): Promise<void> {
+    try {
+      const result = await this.getUIContext().getPromptAction().showDialog({
+        title: this.manageKind === 'folder' ? '删除文件夹' : '删除文档',
+        message: this.manageKind === 'folder' ?
+          '仅空文件夹可以删除。删除后无法恢复，是否继续？' :
+          '文档内容及其检索索引将一并删除，删除后无法恢复。',
+        buttons: [
+          { text: '取消', color: UiTheme.TextSubtle },
+          { text: '删除', color: UiTheme.Danger }
+        ]
+      }) as KnowledgeDialogResult;
+      if (result.index !== 1) {
+        return;
+      }
+    } catch (err) {
+      return;
+    }
+    try {
+      if (this.manageKind === 'folder') {
+        this.store.removeFolder(this.manageId);
+      } else {
+        this.store.removeDoc(this.manageId);
+      }
+      this.refreshCurrentFolder();
+      this.clearResults();
+      this.closeManage();
+      this.showToast(this.manageKind === 'folder' ? '文件夹已删除' : '文档已删除');
+    } catch (err) {
+      this.showToast(err instanceof Error ? err.message : '删除失败');
+    }
   }
 
   private showToast(message: string): void {
@@ -92,7 +245,8 @@ export struct KnowledgeView {
     this.tip = '';
     this.hits = [];
     try {
-      const provider: RetrievalProvider = ProviderHub.retrievalProvider();
+      const provider: RetrievalProvider = this.currentFolderId.length > 0 && !this.searchAllFolders ?
+        new Bm25Retrieval(this.currentFolderId) : ProviderHub.retrievalProvider();
       if (!provider.available()) {
         this.tip = '真机高级检索能力未就绪,本次使用本地 BM25 检索';
       }
@@ -118,7 +272,7 @@ export struct KnowledgeView {
 
   async onRemoveDoc(docId: string): Promise<void> {
     this.store.removeDoc(docId);
-    this.docs = this.store.listDocs();
+    this.refreshCurrentFolder();
     this.hits = [];
     this.showToast('已删除文档');
   }
@@ -150,10 +304,25 @@ export struct KnowledgeView {
     }
     this.importing = true;
     try {
-      const title: string = this.guessTitle(uris[0]);
-      const doc = await this.store.importFromUri(uris[0], title);
-      this.docs = this.store.listDocs();
-      this.showToast(`已导入:${doc.title}`);
+      let imported: number = 0;
+      let failed: number = 0;
+      let lastTitle: string = '';
+      for (let i = 0; i < uris.length; i++) {
+        try {
+          const title: string = this.guessTitle(uris[i]);
+          const doc = await this.store.importFromUri(uris[i], title, this.currentFolderId);
+          lastTitle = doc.title;
+          imported++;
+        } catch (itemErr) {
+          failed++;
+        }
+      }
+      this.refreshCurrentFolder();
+      if (imported === 1 && failed === 0) {
+        this.showToast(`已导入:${lastTitle}`);
+      } else {
+        this.showToast(`导入完成:${imported} 篇成功${failed > 0 ? `，${failed} 篇失败` : ''}`);
+      }
     } catch (err) {
       const msg: string = err instanceof Error ? err.message : '未知错误';
       this.showToast(`导入失败:${msg}`);
@@ -172,7 +341,7 @@ export struct KnowledgeView {
     this.importing = true;
     try {
       const added: number = await this.store.seedSamples();
-      this.docs = this.store.listDocs();
+      this.refreshCurrentFolder();
       if (added === 0) {
         this.showToast('示例文档已存在,无需重复恢复');
       } else {
@@ -229,6 +398,52 @@ export struct KnowledgeView {
     .shadow({ radius: 12, color: UiTheme.ShadowColor, offsetX: 0, offsetY: 3 })
   }
 
+  @Builder
+  FolderRow(folder: KnowledgeFolder) {
+    Row({ space: 10 }) {
+      Text('📁')
+        .fontSize(22)
+      Column() {
+        Text(folder.name)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(UiTheme.TextPrimary)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(`${this.store.listFolders(folder.id).length} 个文件夹 · ${this.store.listDocsInFolder(folder.id).length} 篇文档`)
+          .fontSize(11)
+          .fontColor(UiTheme.TextSubtle)
+          .margin({ top: 4 })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+      .onClick(() => {
+        this.enterFolder(folder);
+      })
+      Text('管理')
+        .fontSize(11)
+        .fontColor(UiTheme.Accent)
+        .backgroundColor(UiTheme.AccentSoft)
+        .borderRadius(9)
+        .padding(6)
+        .onClick(() => {
+          this.manageFolder(folder);
+        })
+      Text('›')
+        .fontSize(22)
+        .fontColor(UiTheme.TextSubtle)
+        .onClick(() => {
+          this.enterFolder(folder);
+        })
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .backgroundColor(UiTheme.Card)
+    .border({ width: 1, color: UiTheme.Border })
+    .borderRadius(16)
+    .padding({ left: 13, right: 10, top: 11, bottom: 11 })
+  }
+
   private openPreview(doc: KnowledgeDoc): void {
     this.previewTitle = doc.title;
     const content: string = this.store.getContent(doc.id);
@@ -270,14 +485,17 @@ export struct KnowledgeView {
       }
       .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
-      Text('删除')
+      .onClick(() => {
+        this.openPreview(doc);
+      })
+      Text('管理')
         .fontSize(12)
-        .fontColor(UiTheme.Danger)
-        .backgroundColor(UiTheme.DangerSoft)
+        .fontColor(UiTheme.Accent)
+        .backgroundColor(UiTheme.AccentSoft)
         .borderRadius(9)
         .padding({ left: 10, right: 10, top: 5, bottom: 5 })
         .onClick(() => {
-          this.onRemoveDoc(doc.id);
+          this.manageDoc(doc);
         })
     }
     .width('100%')
@@ -287,9 +505,6 @@ export struct KnowledgeView {
     .borderRadius(16)
     .padding({ left: 13, right: 10, top: 11, bottom: 11 })
     .shadow({ radius: 12, color: UiTheme.ShadowColor, offsetX: 0, offsetY: 3 })
-    .onClick(() => {
-      this.openPreview(doc);
-    })
   }
 
   build() {
@@ -325,6 +540,81 @@ export struct KnowledgeView {
       .width('100%')
       .padding({ left: 12, right: 12, top: 12, bottom: 4 })
       .backgroundColor(UiTheme.Bg)
+
+      Row({ space: 8 }) {
+        if (this.currentFolderId.length > 0) {
+          Button('‹ 返回')
+            .height(30)
+            .fontSize(12)
+            .fontColor(UiTheme.Accent)
+            .backgroundColor(UiTheme.AccentSoft)
+            .borderRadius(15)
+            .onClick(() => {
+              this.goParentFolder();
+            })
+        }
+        Text(this.folderPath)
+          .fontSize(12)
+          .fontColor(UiTheme.TextSecondary)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+        if (this.currentFolderId.length > 0) {
+          Button(this.searchAllFolders ? '全库检索' : '当前目录')
+            .height(30)
+            .fontSize(10)
+            .fontColor(this.searchAllFolders ? UiTheme.Success : UiTheme.Accent)
+            .backgroundColor(this.searchAllFolders ? UiTheme.SuccessSoft : UiTheme.AccentSoft)
+            .borderRadius(15)
+            .onClick(() => {
+              this.searchAllFolders = !this.searchAllFolders;
+              this.clearResults();
+              this.tip = this.searchAllFolders ? '检索范围已切换为全部知识库' : '检索范围为当前文件夹及其子文件夹';
+            })
+        }
+        Button(this.creatingFolder ? '取消' : '新建文件夹')
+          .height(30)
+          .fontSize(11)
+          .fontColor(UiTheme.Accent)
+          .backgroundColor(UiTheme.AccentSoft)
+          .borderRadius(15)
+          .onClick(() => {
+            this.creatingFolder = !this.creatingFolder;
+            this.newFolderName = '';
+          })
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 6, bottom: 4 })
+      .alignItems(VerticalAlign.Center)
+
+      if (this.creatingFolder) {
+        Row({ space: 8 }) {
+          TextInput({ placeholder: '输入文件夹名称', text: this.newFolderName })
+            .layoutWeight(1)
+            .height(38)
+            .fontSize(14)
+            .backgroundColor(UiTheme.Card)
+            .border({ width: 1, color: UiTheme.Border })
+            .borderRadius(19)
+            .onChange((value: string) => {
+              this.newFolderName = value;
+            })
+            .onSubmit(() => {
+              this.createFolder();
+            })
+          Button('创建')
+            .height(38)
+            .fontSize(13)
+            .fontColor('#FFFFFF')
+            .backgroundColor(UiTheme.Accent)
+            .borderRadius(19)
+            .onClick(() => {
+              this.createFolder();
+            })
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+      }
 
       if (this.tip.length > 0) {
         Text(this.tip)
@@ -375,11 +665,11 @@ export struct KnowledgeView {
 
         ListItem() {
           Row() {
-            Text('知识文档')
+            Text('当前目录')
               .fontSize(13)
               .fontWeight(FontWeight.Medium)
               .fontColor(UiTheme.TextPrimary)
-            Text(`${this.docs.length}`)
+            Text(`${this.folders.length} 个文件夹 · ${this.docs.length} 篇文档`)
               .fontSize(11)
               .fontWeight(FontWeight.Medium)
               .fontColor(UiTheme.Accent)
@@ -393,7 +683,7 @@ export struct KnowledgeView {
           .padding({ left: 2, right: 2, top: 8, bottom: 2 })
         }
 
-        if (this.docs.length === 0) {
+        if (this.folders.length === 0 && this.docs.length === 0) {
           ListItem() {
             Column() {
               Text('文')
@@ -405,12 +695,12 @@ export struct KnowledgeView {
                 .height(72)
                 .textAlign(TextAlign.Center)
                 .borderRadius(36)
-              Text('知识库为空')
+              Text(this.currentFolderId.length === 0 ? '知识库为空' : '当前文件夹为空')
                 .fontSize(16)
                 .fontWeight(FontWeight.Medium)
                 .fontColor(UiTheme.TextSecondary)
                 .margin({ top: 14 })
-              Text('点击「恢复示例文档」一键导入演示资料,或「导入文档」从本地选择 md/txt 文件')
+              Text('可以新建子文件夹，或从本地导入 md/txt 文档')
                 .fontSize(12)
                 .fontColor(UiTheme.TextSubtle)
                 .textAlign(TextAlign.Center)
@@ -422,6 +712,12 @@ export struct KnowledgeView {
             .padding({ top: 36, bottom: 36 })
           }
         }
+
+        ForEach(this.folders, (folder: KnowledgeFolder) => {
+          ListItem() {
+            this.FolderRow(folder)
+          }
+        }, (folder: KnowledgeFolder) => folder.id)
 
         ForEach(this.docs, (doc: KnowledgeDoc) => {
           ListItem() {
@@ -506,6 +802,131 @@ export struct KnowledgeView {
           }
           .width('92%')
           .height('80%')
+          .backgroundColor(UiTheme.Card)
+          .borderRadius(20)
+          .padding(18)
+          .shadow({ radius: 24, color: 'rgba(16,20,32,0.18)', offsetX: 0, offsetY: 8 })
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor('rgba(16,20,32,0.5)')
+      }
+
+      if (this.manageVisible) {
+        Column() {
+          Column() {
+            Row() {
+              Text(this.manageKind === 'folder' ? '管理文件夹' : '管理文档')
+                .fontSize(17)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(UiTheme.TextPrimary)
+                .layoutWeight(1)
+              Text('关闭')
+                .fontSize(13)
+                .fontColor(UiTheme.TextSecondary)
+                .padding(6)
+                .onClick(() => {
+                  this.closeManage();
+                })
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+
+            Text('名称')
+              .fontSize(12)
+              .fontColor(UiTheme.TextSubtle)
+              .width('100%')
+              .margin({ top: 14, bottom: 5 })
+            Row({ space: 8 }) {
+              TextInput({ text: this.manageName, placeholder: '输入名称' })
+                .layoutWeight(1)
+                .height(40)
+                .fontSize(14)
+                .backgroundColor(UiTheme.Bg)
+                .border({ width: 1, color: UiTheme.Border })
+                .borderRadius(10)
+                .onChange((value: string) => {
+                  this.manageName = value;
+                })
+              Button('保存')
+                .height(40)
+                .fontSize(13)
+                .fontColor('#FFFFFF')
+                .backgroundColor(UiTheme.Accent)
+                .borderRadius(10)
+                .onClick(() => {
+                  this.renameManaged();
+                })
+            }
+            .width('100%')
+
+            Row() {
+              Text('移动到…')
+                .fontSize(14)
+                .fontColor(UiTheme.Accent)
+                .layoutWeight(1)
+              Text(this.moveVisible ? '收起' : '选择目录')
+                .fontSize(12)
+                .fontColor(UiTheme.TextSubtle)
+            }
+            .width('100%')
+            .padding({ top: 14, bottom: 10 })
+            .onClick(() => {
+              this.moveVisible = !this.moveVisible;
+            })
+
+            if (this.moveVisible) {
+              List({ space: 4 }) {
+                ListItem() {
+                  Text('📁 我的知识库（根目录）')
+                    .fontSize(13)
+                    .fontColor(UiTheme.TextPrimary)
+                    .width('100%')
+                    .padding(10)
+                    .backgroundColor(UiTheme.Bg)
+                    .borderRadius(8)
+                    .onClick(() => {
+                      this.moveManaged('');
+                    })
+                }
+                ForEach(this.destinations, (folder: KnowledgeFolder) => {
+                  ListItem() {
+                    Text(`📁 ${this.store.folderPath(folder.id)}`)
+                      .fontSize(13)
+                      .fontColor(folder.id === this.manageId ? UiTheme.TextSubtle : UiTheme.TextPrimary)
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .width('100%')
+                      .padding(10)
+                      .backgroundColor(UiTheme.Bg)
+                      .borderRadius(8)
+                      .onClick(() => {
+                        this.moveManaged(folder.id);
+                      })
+                  }
+                }, (folder: KnowledgeFolder) => folder.id)
+              }
+              .width('100%')
+              .height(190)
+              .scrollBar(BarState.Auto)
+            }
+
+            Button(this.manageKind === 'folder' ? '删除空文件夹' : '删除文档')
+              .width('100%')
+              .height(40)
+              .fontSize(13)
+              .fontColor(UiTheme.Danger)
+              .backgroundColor(UiTheme.DangerSoft)
+              .borderRadius(10)
+              .margin({ top: 14 })
+              .onClick(() => {
+                this.deleteManaged();
+              })
+          }
+          .width('90%')
+          .constraintSize({ maxWidth: 480 })
           .backgroundColor(UiTheme.Card)
           .borderRadius(20)
           .padding(18)
