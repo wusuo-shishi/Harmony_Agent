@@ -86,6 +86,17 @@ export class DeepSeekLlmProvider implements LLMProvider {
   private apiKey: string = '';
   private baseUrl: string = 'https://api.deepseek.com';
   private model: string = 'deepseek-chat';
+  private activeRequest: http.HttpRequest | undefined = undefined;
+
+  cancelActive(): void {
+    if (this.activeRequest !== undefined) {
+      try {
+        this.activeRequest.destroy();
+      } catch (err) {
+      }
+      this.activeRequest = undefined;
+    }
+  }
 
   configure(apiKey: string, baseUrl: string, model: string): void {
     if (apiKey.length > 0) {
@@ -143,6 +154,7 @@ export class DeepSeekLlmProvider implements LLMProvider {
     }
     const requestOptions: http.HttpRequestOptions = this.buildRequest(messages, false);
     const httpRequest = http.createHttp();
+    this.activeRequest = httpRequest;
     try {
       const response = await httpRequest.request(this.buildUrl(), requestOptions);
       if (response.responseCode !== 200) {
@@ -161,6 +173,9 @@ export class DeepSeekLlmProvider implements LLMProvider {
         httpRequest.destroy();
       } catch (err) {
       }
+      if (this.activeRequest === httpRequest) {
+        this.activeRequest = undefined;
+      }
     }
   }
 
@@ -170,6 +185,7 @@ export class DeepSeekLlmProvider implements LLMProvider {
     }
     const requestOptions: http.HttpRequestOptions = this.buildRequest(messages, true);
     const httpRequest = http.createHttp();
+    this.activeRequest = httpRequest;
     const decoder = new util.TextDecoder('utf-8');
     let buffer: string = '';
     let fullText: string = '';
@@ -230,16 +246,25 @@ export class DeepSeekLlmProvider implements LLMProvider {
           httpRequest.off('dataEnd');
         } catch (err) {
         }
+        if (this.activeRequest === httpRequest) {
+          this.activeRequest = undefined;
+        }
         resolve(fullText);
       });
 
       httpRequest.requestInStream(this.buildUrl(), requestOptions).then((code: number) => {
         if (code !== 200) {
           finished = true;
+          if (this.activeRequest === httpRequest) {
+            this.activeRequest = undefined;
+          }
           reject(new Error(`DeepSeek 流式请求失败,HTTP ${code}`));
         }
       }).catch((err: Object) => {
         finished = true;
+        if (this.activeRequest === httpRequest) {
+          this.activeRequest = undefined;
+        }
         reject(new Error(`DeepSeek 流式调用失败:${JSON.stringify(err)}`));
       });
     });
@@ -292,6 +317,7 @@ export class DeepSeekLlmProvider implements LLMProvider {
       readTimeout: 60000
     };
     const httpRequest = http.createHttp();
+    this.activeRequest = httpRequest;
     try {
       const response = await httpRequest.request(this.buildUrl(), requestOptions);
       if (response.responseCode !== 200) {
@@ -319,6 +345,9 @@ export class DeepSeekLlmProvider implements LLMProvider {
       try {
         httpRequest.destroy();
       } catch (err) {
+      }
+      if (this.activeRequest === httpRequest) {
+        this.activeRequest = undefined;
       }
     }
   }

@@ -16,7 +16,7 @@ import { StepListener } from './StepListener';
 import { IntentResult, IntentRouter } from './IntentRouter';
 import { ChainPlan, ChainPlanner, ChainStepKind } from './ChainPlanner';
 import { LearningAgent } from './LearningAgent';
-import { ScheduleAgent } from './ScheduleAgent';
+import { ScheduleAgent, ScheduleConfirmHandler } from './ScheduleAgent';
 import { DocumentAgent } from './DocumentAgent';
 import { CapabilityManager } from '../core/CapabilityManager';
 import { CalendarScheduleProvider } from '../provider/schedule/CalendarScheduleProvider';
@@ -35,6 +35,7 @@ export class AgentDeps {
   imageUri: string = '';
   imageUris: string[] = [];
   requestImage: (() => Promise<string>) | undefined = undefined;
+  confirmSchedule: ScheduleConfirmHandler | undefined = undefined;
 
   constructor(llm: LLMProvider, retrieval: RetrievalProvider, store: KnowledgeStore) {
     this.llm = llm;
@@ -67,7 +68,7 @@ export class Orchestrator {
     }
     if (intent.kind === AgentKind.Schedule) {
       this.prepareScheduleProvider(deps);
-      return await this.scheduleAgent.run(text, deps.llm, deps.schedule, onStep);
+      return await this.scheduleAgent.run(text, deps.llm, deps.schedule, onStep, deps.confirmSchedule);
     }
     if (intent.kind === AgentKind.Document) {
       return await this.runDocument(text, deps, onStep, onDelta);
@@ -189,7 +190,7 @@ export class Orchestrator {
       const time: string = AgentTools.readStringArg(argsJson, 'time');
       this.prepareScheduleProvider(deps);
       const sentence: string = `${time} 安排「${title}」提醒我`;
-      const sub = await this.scheduleAgent.run(sentence, deps.llm, deps.schedule, onStep);
+      const sub = await this.scheduleAgent.run(sentence, deps.llm, deps.schedule, onStep, deps.confirmSchedule);
       return sub.answer;
     }
     return `未知工具:${name}`;
@@ -288,7 +289,7 @@ export class Orchestrator {
         onStep(allSteps);
         // 日程输入优先取上游原始文本(payload),否则用上一步结果文本
         const scheduleInput: string = carry.length > 0 ? carry : text;
-        sub = await this.scheduleAgent.run(scheduleInput, deps.llm, deps.schedule, onStep);
+        sub = await this.scheduleAgent.run(scheduleInput, deps.llm, deps.schedule, onStep, deps.confirmSchedule);
       } else if (kind === ChainStepKind.Learning) {
         const stepHead: AgentStep = AgentStep.of(`第${i + 1}步(学习助手):知识库问答`);
         allSteps.push(stepHead);

@@ -10,13 +10,19 @@ import { AsrService } from '../provider/asr/AsrService';
 import { KnowledgeStore } from '../knowledge/KnowledgeStore';
 import { CapabilityManager } from '../core/CapabilityManager';
 import { AgentDeps, Orchestrator } from '../agent/Orchestrator';
-import { AgentRunResult, AgentStep, AgentKind, StepState } from '../agent/AgentModels';
+import { AgentRunResult, AgentStep, AgentKind, StepState, ScheduleDraft } from '../agent/AgentModels';
 import { KnowledgeView } from '../common/KnowledgeView';
 import { MarkdownText } from '../common/MarkdownText';
 import { UiTheme } from '../common/UiTheme';
+import { ConversationStore, ConversationSummary } from '../core/ConversationStore';
+import { UserSettings } from '../core/UserSettings';
 
 interface PermissionRequest {
   authResults: number[];
+}
+
+interface DialogResult {
+  index: number;
 }
 
 @Entry
@@ -36,6 +42,12 @@ struct Index {
   @State streamingText: string = '';
   @State streamingVisible: boolean = false;
   @State pendingImages: string[] = [];
+  @State selectedMessageId: string = '';
+  @State stopRequested: boolean = false;
+  @State conversationPanelVisible: boolean = false;
+  @State conversationItems: ConversationSummary[] = [];
+  @State currentConversationId: string = '';
+  @State conversationRenameText: string = '';
   @StorageProp('kbHeightPx') kbHeightPx: number = 0;
   @State bubbleCapVp: number = 420;
   private scroller: Scroller = new Scroller();
@@ -44,6 +56,7 @@ struct Index {
   private orchestrator: Orchestrator = new Orchestrator();
   private agentDeps: AgentDeps | undefined = undefined;
   private agentGreetingShown: boolean = false;
+  private conversationStore: ConversationStore = new ConversationStore();
 
   aboutToAppear(): void {
     try {
@@ -52,22 +65,14 @@ struct Index {
     } catch (err) {
     }
     ProviderHub.initFromConfig();
+    UserSettings.load(this.context()).catch((): void => {
+    });
     this.registerWideMode();
     const ctx = this.context();
     if (ctx !== undefined) {
       ctx.eventHub.on('continuationRestore', this.onContinuationRestore);
     }
-    if (!this.tryRestoreSession()) {
-      const greeting: ChatMessage = ChatMessage.of(ChatRole.Assistant,
-        '你好,我是 OpenHarmonyAgent(当前后端:' + ProviderHub.llmProvider().providerName + ')。\n' +
-        '支持三类智能体,直接输入即可自动路由:\n' +
-        '· 学习助手:如「引用溯源是什么」→ 检索知识库+引用回答\n' +
-        '· 日程管家:如「明天下午3点开组会提醒我」\n' +
-        '· 文档处理:点输入框右侧「+」选图/拍照→OCR→总结\n' +
-        '· 语音输入:点输入框左侧的麦克风按钮\n' +
-        '点右上角书本图标可管理/展开收起知识库(平板端点击即在右侧切换)');
-      this.appendMessage(greeting);
-    }
+    this.initConversations();
   }
 
   aboutToDisappear(): void {
@@ -106,6 +111,105 @@ struct Index {
 
   private syncSessionSnapshot(): void {
     AppStorage.setOrCreate<string>('sessionSnapshot', SessionCodec.encode(this.messages));
+    if (this.currentConversationId.length > 0) {
+      this.conversationStore.save(this.currentConversationId, this.messages).then((): void => {
+        this.conversationItems = this.conversationStore.summaries();
+      }).catch((): void => {
+      });
+    }
+  }
+
+  private async initConversations(): Promise<void> {
+    try {
+      await this.conversationStore.init(this.context());
+      if (this.tryRestoreSession()) {
+        this.currentConversationId = this.conversationStore.newId();
+      } else {
+        const savedId: string = this.conversationStore.currentId();
+        const saved: ChatMessage[] = savedId.length > 0 ? this.conversationStore.load(savedId) : [];
+        if (saved.length > 0) {
+          this.currentConversationId = savedId;
+          this.messages = saved;
+        } else {
+          this.currentConversationId = this.conversationStore.newId();
+          this.messages = [this.createGreeting()];
+        }
+      }
+      await this.conversationStore.save(this.currentConversationId, this.messages);
+      this.conversationItems = this.conversationStore.summaries();
+      this.syncSessionSnapshot();
+      this.scrollToBottom();
+    } catch (err) {
+      if (this.messages.length === 0) {
+        this.messages = [this.createGreeting()];
+      }
+      this.showToast('历史会话加载失败,本次对话仍可继续使用');
+    }
+  }
+
+  private createGreeting(): ChatMessage {
+    return ChatMessage.of(ChatRole.Assistant,
+      '你好,我是 OpenHarmonyAgent(当前后端:' + ProviderHub.llmProvider().providerName + ')。\n' +
+      '支持学习问答、日程管理、图片 OCR 与文档总结。直接输入需求,我会自动选择合适的助手。');
+  }
+
+  private async createConversation(): Promise<void> {
+    if (this.agentRunning) {
+      return;
+    }
+    this.currentConversationId = this.conversationStore.newId();
+    this.messages = [this.createGreeting()];
+    this.inputText = '';
+    this.pendingImages = [];
+    this.selectedMessageId = '';
+    this.conversationPanelVisible = false;
+    await this.conversationStore.save(this.currentConversationId, this.messages);
+    this.conversationItems = this.conversationStore.summaries();
+    this.syncSessionSnapshot();
+  }
+
+  private async switchConversation(id: string): Promise<void> {
+    if (this.agentRunning || id === this.currentConversationId) {
+      this.conversationPanelVisible = false;
+      return;
+    }
+    const loaded: ChatMessage[] = this.conversationStore.load(id);
+    if (loaded.length === 0) {
+      this.showToast('该会话为空或已损坏');
+      return;
+    }
+    this.currentConversationId = id;
+    this.messages = loaded;
+    this.inputText = '';
+    this.pendingImages = [];
+    this.selectedMessageId = '';
+    this.conversationPanelVisible = false;
+    this.syncSessionSnapshot();
+    this.scrollToBottom();
+  }
+
+  private async removeConversation(id: string): Promise<void> {
+    if (this.agentRunning) {
+      return;
+    }
+    await this.conversationStore.remove(id);
+    if (id === this.currentConversationId) {
+      await this.createConversation();
+      return;
+    }
+    this.conversationItems = this.conversationStore.summaries();
+  }
+
+  private async renameCurrentConversation(): Promise<void> {
+    const title: string = this.conversationRenameText.trim();
+    if (title.length === 0 || this.currentConversationId.length === 0) {
+      this.showToast('请输入会话名称');
+      return;
+    }
+    await this.conversationStore.rename(this.currentConversationId, title);
+    this.conversationItems = this.conversationStore.summaries();
+    this.conversationRenameText = '';
+    this.showToast('会话已重命名');
   }
 
   private registerWideMode(): void {
@@ -161,6 +265,9 @@ struct Index {
         }
         return picked;
       };
+      this.agentDeps.confirmSchedule = async (draft: ScheduleDraft): Promise<boolean> => {
+        return await this.confirmScheduleDraft(draft);
+      };
     }
     return this.agentDeps;
   }
@@ -170,6 +277,106 @@ struct Index {
     this.messages = next;
     this.syncSessionSnapshot();
     this.scrollToBottom();
+  }
+
+  private async confirmScheduleDraft(draft: ScheduleDraft): Promise<boolean> {
+    const start = new Date(draft.startTime);
+    const end = new Date(draft.endTime);
+    const pad = (value: number): string => value < 10 ? `0${value}` : `${value}`;
+    const startText: string = `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())} ` +
+      `${pad(start.getHours())}:${pad(start.getMinutes())}`;
+    const endText: string = `${pad(end.getHours())}:${pad(end.getMinutes())}`;
+    try {
+      const result = await this.getUIContext().getPromptAction().showDialog({
+        title: '确认创建日程',
+        message: `标题:${draft.title}\n时间:${startText} - ${endText}\n提醒:提前 ${draft.reminderMinutes} 分钟`,
+        buttons: [
+          { text: '取消', color: UiTheme.TextSubtle },
+          { text: '确认创建', color: UiTheme.Accent }
+        ]
+      }) as DialogResult;
+      return result.index === 1;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  private toggleMessageActions(id: string): void {
+    this.selectedMessageId = this.selectedMessageId === id ? '' : id;
+  }
+
+  private deleteMessage(id: string): void {
+    const next: ChatMessage[] = [];
+    for (let i = 0; i < this.messages.length; i++) {
+      if (this.messages[i].id !== id) {
+        next.push(this.messages[i]);
+      }
+    }
+    this.messages = next;
+    this.selectedMessageId = '';
+    this.syncSessionSnapshot();
+    this.showToast('消息已删除');
+  }
+
+  private reuseUserMessage(msg: ChatMessage): void {
+    this.inputText = msg.content;
+    this.pendingImages = msg.imageUris.slice();
+    this.selectedMessageId = '';
+    this.showToast('内容已填入输入框');
+  }
+
+  private canRetryMessage(msg: ChatMessage): boolean {
+    if (msg.role !== ChatRole.Assistant || this.messages.length < 2) {
+      return false;
+    }
+    return this.messages[this.messages.length - 1].id === msg.id;
+  }
+
+  private async retryLastAssistant(msg: ChatMessage): Promise<void> {
+    if (this.agentRunning || !this.canRetryMessage(msg)) {
+      return;
+    }
+    let user: ChatMessage | undefined = undefined;
+    for (let i = this.messages.length - 2; i >= 0; i--) {
+      if (this.messages[i].role === ChatRole.User) {
+        user = this.messages[i];
+        break;
+      }
+    }
+    if (user === undefined) {
+      this.showToast('没有找到可重试的用户消息');
+      return;
+    }
+    this.deleteMessageSilently(msg.id);
+    const deps: AgentDeps = this.ensureAgentDeps();
+    deps.imageUris = user.imageUris.slice();
+    deps.imageUri = user.imageUris.length > 0 ? user.imageUris[0] : '';
+    this.selectedMessageId = '';
+    await this.runAgent(user.content);
+  }
+
+  private deleteMessageSilently(id: string): void {
+    const next: ChatMessage[] = [];
+    for (let i = 0; i < this.messages.length; i++) {
+      if (this.messages[i].id !== id) {
+        next.push(this.messages[i]);
+      }
+    }
+    this.messages = next;
+    this.syncSessionSnapshot();
+  }
+
+  private stopGeneration(): void {
+    if (!this.agentRunning) {
+      return;
+    }
+    this.stopRequested = true;
+    ProviderHub.llmProvider().cancelActive();
+    this.streamingText = '';
+    this.streamingVisible = false;
+    this.agentSteps = [];
+    this.agentTitle = '正在停止…';
+    this.showToast('已停止显示本次回复');
   }
 
 
@@ -205,6 +412,24 @@ struct Index {
       this.getUIContext().getPromptAction().showToast({ message: message });
     } catch (err) {
     }
+  }
+
+  private friendlyError(err: Object): string {
+    const raw: string = err instanceof Error ? err.message : `${err}`;
+    const lower: string = raw.toLowerCase();
+    if (lower.indexOf('401') >= 0 || lower.indexOf('403') >= 0 || lower.indexOf('api key') >= 0) {
+      return 'AI 服务认证失败,请检查服务配置后重试。';
+    }
+    if (lower.indexOf('timeout') >= 0 || raw.indexOf('超时') >= 0) {
+      return '请求超时,请检查网络后重试。';
+    }
+    if (lower.indexOf('network') >= 0 || lower.indexOf('connect') >= 0 || raw.indexOf('网络') >= 0) {
+      return '当前网络不可用或服务无法连接,请稍后重试。';
+    }
+    if (raw.indexOf('权限') >= 0 || lower.indexOf('permission') >= 0) {
+      return '缺少所需权限,请在系统设置中授权后重试。';
+    }
+    return '本次处理失败,请稍后重试或换一种说法。';
   }
 
   private async ensureMicPermission(): Promise<boolean> {
@@ -288,6 +513,7 @@ struct Index {
       }
     }
     this.agentRunning = true;
+    this.stopRequested = false;
     this.agentTitle = '智能体处理中…';
     this.agentSteps = [AgentStep.of('识别意图…')];
     this.streamingText = '';
@@ -298,7 +524,7 @@ struct Index {
         this.renderSteps(steps);
         this.scrollToBottom();
       }, (delta: string): void => {
-        if (delta.length === 0) {
+        if (delta.length === 0 || this.stopRequested) {
           return;
         }
         this.streamingText += delta;
@@ -306,7 +532,7 @@ struct Index {
         this.scrollToBottom();
       });
       this.agentTitle = this.agentNameOf(result.kind);
-      if (result.answer.trim().length > 0) {
+      if (!this.stopRequested && result.answer.trim().length > 0) {
         this.appendMessage(ChatMessage.of(ChatRole.Assistant, result.answer));
       }
       this.streamingText = '';
@@ -314,11 +540,14 @@ struct Index {
       this.agentSteps = [];
     } catch (err) {
       this.agentSteps = [];
-      this.appendMessage(ChatMessage.of(ChatRole.Assistant, '智能体执行失败,请稍后重试。'));
+      if (!this.stopRequested) {
+        this.appendMessage(ChatMessage.of(ChatRole.Assistant, this.friendlyError(err as Object)));
+      }
       this.streamingText = '';
       this.streamingVisible = false;
     } finally {
       this.agentRunning = false;
+      this.stopRequested = false;
       this.agentTitle = '';
     }
   }
@@ -422,6 +651,11 @@ struct Index {
       }
     }
     this.pendingImages = next;
+  }
+
+  private clearPendingImages(): void {
+    this.pendingImages = [];
+    this.showToast('已清空待发送图片');
   }
 
   @Builder
@@ -566,19 +800,172 @@ struct Index {
     .border({ width: msg.role === ChatRole.User ? 0 : 1, color: UiTheme.Border })
     .padding({ left: 13, right: 13, top: 9, bottom: 9 })
     .shadow({ radius: 12, color: UiTheme.ShadowColor, offsetX: 0, offsetY: 3 })
+    .onClick(() => {
+      this.toggleMessageActions(msg.id);
+    })
+  }
+
+  @Builder
+  MessageActions(msg: ChatMessage) {
+    Row({ space: 6 }) {
+      if (msg.role === ChatRole.User) {
+        Button('再次输入')
+          .fontSize(11)
+          .fontColor(UiTheme.Accent)
+          .height(28)
+          .backgroundColor(UiTheme.AccentSoft)
+          .borderRadius(14)
+          .onClick(() => {
+            this.reuseUserMessage(msg);
+          })
+      } else if (this.canRetryMessage(msg)) {
+        Button('重新生成')
+          .fontSize(11)
+          .fontColor(UiTheme.Accent)
+          .height(28)
+          .backgroundColor(UiTheme.AccentSoft)
+          .borderRadius(14)
+          .enabled(!this.agentRunning)
+          .onClick(() => {
+            this.retryLastAssistant(msg);
+          })
+      }
+      Button('删除')
+        .fontSize(11)
+        .fontColor(UiTheme.Danger)
+        .height(28)
+        .backgroundColor(UiTheme.DangerSoft)
+        .borderRadius(14)
+        .enabled(!this.agentRunning)
+        .onClick(() => {
+          this.deleteMessage(msg.id);
+        })
+    }
+    .margin({ top: 4 })
   }
 
   @Builder
   ChatColumn() {
     Column() {
+      if (this.conversationPanelVisible) {
+        Column() {
+          Row() {
+            Text('历史会话')
+              .fontSize(16)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(UiTheme.TextPrimary)
+              .layoutWeight(1)
+            Button('新对话')
+              .height(30)
+              .fontSize(12)
+              .fontColor('#FFFFFF')
+              .backgroundColor(UiTheme.Accent)
+              .borderRadius(15)
+              .enabled(!this.agentRunning)
+              .onClick(() => {
+                this.createConversation();
+              })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+
+          Row({ space: 6 }) {
+            TextInput({ placeholder: '重命名当前会话', text: this.conversationRenameText })
+              .layoutWeight(1)
+              .height(34)
+              .fontSize(13)
+              .backgroundColor(UiTheme.Bg)
+              .borderRadius(17)
+              .onChange((value: string) => {
+                this.conversationRenameText = value;
+              })
+            Button('保存')
+              .height(32)
+              .fontSize(12)
+              .fontColor(UiTheme.Accent)
+              .backgroundColor(UiTheme.AccentSoft)
+              .borderRadius(16)
+              .onClick(() => {
+                this.renameCurrentConversation();
+              })
+          }
+          .width('100%')
+          .margin({ top: 8 })
+
+          if (this.conversationItems.length === 0) {
+            Text('暂无历史会话')
+              .fontSize(13)
+              .fontColor(UiTheme.TextSubtle)
+              .width('100%')
+              .textAlign(TextAlign.Center)
+              .padding(16)
+          } else {
+            List({ space: 4 }) {
+              ForEach(this.conversationItems, (item: ConversationSummary) => {
+                ListItem() {
+                  Row({ space: 8 }) {
+                    Column() {
+                      Text(item.title)
+                        .fontSize(14)
+                        .fontColor(item.id === this.currentConversationId ? UiTheme.Accent : UiTheme.TextPrimary)
+                        .maxLines(1)
+                        .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      Text(this.formatConversationTime(item.updatedAt))
+                        .fontSize(10)
+                        .fontColor(UiTheme.TextSubtle)
+                        .margin({ top: 2 })
+                    }
+                    .alignItems(HorizontalAlign.Start)
+                    .layoutWeight(1)
+                    .onClick(() => {
+                      this.switchConversation(item.id);
+                    })
+                    Text('删除')
+                      .fontSize(11)
+                      .fontColor(UiTheme.Danger)
+                      .padding(6)
+                      .onClick(() => {
+                        this.removeConversation(item.id);
+                      })
+                  }
+                  .width('100%')
+                  .padding({ left: 10, right: 6, top: 8, bottom: 8 })
+                  .backgroundColor(item.id === this.currentConversationId ? UiTheme.AccentSoft : UiTheme.Bg)
+                  .borderRadius(10)
+                }
+              }, (item: ConversationSummary) => item.id)
+            }
+            .width('100%')
+            .height(Math.min(260, this.conversationItems.length * 54))
+            .margin({ top: 8 })
+            .scrollBar(BarState.Auto)
+          }
+        }
+        .width('100%')
+        .padding(12)
+        .backgroundColor(UiTheme.Card)
+        .border({ width: 1, color: UiTheme.Border })
+        .shadow({ radius: 12, color: UiTheme.ShadowColor, offsetY: 3 })
+      }
       List({ space: 10, scroller: this.scroller }) {
         ForEach(this.messages, (msg: ChatMessage) => {
           ListItem() {
-            Row() {
-              this.MessageBubble(msg)
+            Column() {
+              Row() {
+                this.MessageBubble(msg)
+              }
+              .width('100%')
+              .justifyContent(msg.role === ChatRole.User ? FlexAlign.End : FlexAlign.Start)
+              if (this.selectedMessageId === msg.id) {
+                Row() {
+                  this.MessageActions(msg)
+                }
+                .width('100%')
+                .justifyContent(msg.role === ChatRole.User ? FlexAlign.End : FlexAlign.Start)
+              }
             }
             .width('100%')
-            .justifyContent(msg.role === ChatRole.User ? FlexAlign.End : FlexAlign.Start)
+            .alignItems(msg.role === ChatRole.User ? HorizontalAlign.End : HorizontalAlign.Start)
           }
         }, (msg: ChatMessage) => msg.id)
 
@@ -611,6 +998,19 @@ struct Index {
       .layoutWeight(1)
       .padding({ left: 12, right: 12, top: 12, bottom: 6 })
       .scrollBar(BarState.Off)
+
+      if (this.messages.length > 5) {
+        Button('↓ 回到底部')
+          .height(30)
+          .fontSize(12)
+          .fontColor(UiTheme.Accent)
+          .backgroundColor(UiTheme.AccentSoft)
+          .borderRadius(15)
+          .margin({ bottom: 4 })
+          .onClick(() => {
+            this.scrollToBottom();
+          })
+      }
 
       if (this.pendingImages.length > 0) {
         Column() {
@@ -656,11 +1056,22 @@ struct Index {
           .scrollable(ScrollDirection.Horizontal)
           .width('100%')
 
-          Text('已选 ' + this.pendingImages.length + ' 张,可继续输入文字后一并发送')
-            .fontSize(11)
-            .fontColor(UiTheme.TextSubtle)
-            .width('100%')
-            .margin({ top: 4 })
+          Row() {
+            Text('已选 ' + this.pendingImages.length + ' 张,可继续输入文字后一并发送')
+              .fontSize(11)
+              .fontColor(UiTheme.TextSubtle)
+              .layoutWeight(1)
+            Text('清空')
+              .fontSize(11)
+              .fontColor(UiTheme.Danger)
+              .padding({ left: 10, top: 4, bottom: 4 })
+              .onClick(() => {
+                this.clearPendingImages();
+              })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+          .margin({ top: 4 })
         }
         .width('100%')
         .padding({ left: 12, right: 12, top: 6, bottom: 2 })
@@ -710,15 +1121,19 @@ struct Index {
         .onClick(() => {
           this.pickImages();
         })
-        Button(this.loading || this.agentRunning ? '…' : '发送')
+        Button(this.agentRunning ? '停止' : (this.loading ? '…' : '发送'))
           .height(42)
           .fontSize(15)
           .fontColor('#FFFFFF')
-          .backgroundColor('#4C6EF5')
+          .backgroundColor(this.agentRunning ? UiTheme.Danger : '#4C6EF5')
           .borderRadius(21)
-          .enabled(!this.loading && !this.agentRunning)
+          .enabled(!this.loading)
           .onClick(() => {
-            this.onSend();
+            if (this.agentRunning) {
+              this.stopGeneration();
+            } else {
+              this.onSend();
+            }
           })
       }
       .width('100%')
@@ -731,6 +1146,12 @@ struct Index {
     }
     .width('100%')
     .height('100%')
+  }
+
+  private formatConversationTime(timestamp: number): string {
+    const date = new Date(timestamp);
+    const pad = (value: number): string => value < 10 ? `0${value}` : `${value}`;
+    return `${date.getMonth() + 1}-${date.getDate()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
   }
 
   @Builder
@@ -769,6 +1190,36 @@ struct Index {
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
         Button() {
+          Image($r('app.media.ic_history_chat'))
+            .width(21)
+            .height(21)
+            .objectFit(ImageFit.Contain)
+        }
+          .width(38)
+          .height(38)
+          .type(ButtonType.Circle)
+          .backgroundColor('rgba(255,255,255,0.18)')
+          .margin({ right: 8 })
+          .accessibilityText('历史会话')
+          .onClick(() => {
+            this.conversationPanelVisible = !this.conversationPanelVisible;
+          })
+        Button() {
+          Image($r('app.media.ic_settings'))
+            .width(21)
+            .height(21)
+            .objectFit(ImageFit.Contain)
+        }
+          .width(38)
+          .height(38)
+          .type(ButtonType.Circle)
+          .backgroundColor('rgba(255,255,255,0.18)')
+          .margin({ right: 8 })
+          .accessibilityText('设置')
+          .onClick(() => {
+            this.getUIContext().getRouter().pushUrl({ url: 'pages/SettingsPage' });
+          })
+        Button() {
           Image($r('app.media.ic_book'))
             .width(22)
             .height(22)
@@ -778,6 +1229,7 @@ struct Index {
         .height(38)
         .type(ButtonType.Circle)
         .backgroundColor('rgba(255,255,255,0.18)')
+        .accessibilityText('知识库')
         .onClick(() => {
           this.toggleKnowledge();
         })
