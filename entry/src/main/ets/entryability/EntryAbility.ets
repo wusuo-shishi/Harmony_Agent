@@ -1,4 +1,4 @@
-import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
+import { AbilityConstant, ConfigurationConstant, UIAbility, Want, wantConstant } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 
@@ -19,6 +19,8 @@ export default class EntryAbility extends UIAbility {
     // 接续恢复:冷启动且携带接续数据时,交由 UI 层恢复
     if (launchParam.launchReason === AbilityConstant.LaunchReason.CONTINUATION) {
       this.pullContinuationPayload(want);
+      // 接续启动不回调 onWindowStageCreate,须同步触发窗口恢复,否则对端停在启动动画黑屏
+      this.context.restoreWindowStage(new LocalStorage());
     }
   }
 
@@ -26,6 +28,7 @@ export default class EntryAbility extends UIAbility {
     // 单实例热启动接续:同样写入 AppStorage,由 UI 层(Index)消费
     if (launchParam.launchReason === AbilityConstant.LaunchReason.CONTINUATION) {
       this.pullContinuationPayload(want);
+      this.context.restoreWindowStage(new LocalStorage());
     }
   }
 
@@ -58,6 +61,8 @@ export default class EntryAbility extends UIAbility {
         wantParam['agentSession'] = snapshot;
         hilog.info(DOMAIN, TAG, 'onContinue: payload=%{public}d chars', snapshot.length);
       }
+      // 应用自行在 onWindowStageRestore 中加载页面并恢复会话,禁用系统页面栈迁移
+      wantParam[wantConstant.Params.SUPPORT_CONTINUE_PAGE_STACK_KEY] = false;
       return AbilityConstant.OnContinueResult.AGREE;
     } catch (err) {
       return AbilityConstant.OnContinueResult.REJECT;
@@ -68,8 +73,8 @@ export default class EntryAbility extends UIAbility {
     hilog.info(DOMAIN, TAG, '%{public}s', 'Ability onDestroy');
   }
 
-  onWindowStageCreate(windowStage: window.WindowStage): void {
-    hilog.info(DOMAIN, TAG, 'onWindowStageCreate at %{public}d ms', Date.now() - this.launchStart);
+  private initWindowStage(windowStage: window.WindowStage, stage: string): void {
+    hilog.info(DOMAIN, TAG, '%{public}s at %{public}d ms', stage, Date.now() - this.launchStart);
 
     try {
       // 发布软键盘高度(px),供页面手动避让,避免系统"整体上抬"把顶栏顶出屏幕
@@ -88,6 +93,15 @@ export default class EntryAbility extends UIAbility {
       }
       hilog.info(DOMAIN, TAG, 'Index content loaded at %{public}d ms', Date.now() - this.launchStart);
     });
+  }
+
+  onWindowStageCreate(windowStage: window.WindowStage): void {
+    this.initWindowStage(windowStage, 'onWindowStageCreate');
+  }
+
+  onWindowStageRestore(windowStage: window.WindowStage): void {
+    // 接续启动(冷/热)只会回调本函数,不回调 onWindowStageCreate,必须在此完成同样的初始化
+    this.initWindowStage(windowStage, 'onWindowStageRestore');
   }
 
   onWindowStageDestroy(): void {
