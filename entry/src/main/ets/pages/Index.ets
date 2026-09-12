@@ -12,7 +12,7 @@ import { CapabilityManager } from '../core/CapabilityManager';
 import { AgentDeps, Orchestrator } from '../agent/Orchestrator';
 import { AgentRunResult, AgentStep, AgentKind, StepState, ScheduleDraft } from '../agent/AgentModels';
 import { KnowledgeView } from '../common/KnowledgeView';
-import { MarkdownText } from '../common/MarkdownText';
+import { MarkdownText, MdParser } from '../common/MarkdownText';
 import { UiTheme } from '../common/UiTheme';
 import { ConversationStore, ConversationSummary } from '../core/ConversationStore';
 import { UserSettings } from '../core/UserSettings';
@@ -42,6 +42,7 @@ struct Index {
   @State streamingText: string = '';
   @State streamingVisible: boolean = false;
   @State pendingImages: string[] = [];
+  @State atBottom: boolean = true;
   @State selectedMessageId: string = '';
   @State stopRequested: boolean = false;
   @State conversationPanelVisible: boolean = false;
@@ -50,6 +51,7 @@ struct Index {
   @State conversationRenameText: string = '';
   @StorageProp('kbHeightPx') kbHeightPx: number = 0;
   @State bubbleCapVp: number = 420;
+  private readonly maxPendingImages: number = 9;
   private scroller: Scroller = new Scroller();
   private maxHistory: number = 20;
   private asr: AsrService = new AsrService();
@@ -88,29 +90,47 @@ struct Index {
   }
 
   private onContinuationRestore = (): void => {
-    if (this.tryRestoreSession()) {
-      this.scrollToBottom();
+    try {
+      if (this.tryRestoreSession()) {
+        this.scrollToBottom();
+      }
+    } catch (err) {
+      hilog.error(0x0000, 'Continuation', 'event restore failed: %{public}s', JSON.stringify(err));
+      AppStorage.delete('restoredSession');
     }
   };
 
   private tryRestoreSession(): boolean {
-    const restored: string | undefined = AppStorage.get<string>('restoredSession');
-    if (restored === undefined || restored.length === 0) {
-      return false;
-    }
-    const restoredMsgs: ChatMessage[] = SessionCodec.decode(restored);
-    if (restoredMsgs.length === 0) {
+    try {
+      const restored: string | undefined = AppStorage.get<string>('restoredSession');
+      if (restored === undefined || restored.length === 0) {
+        return false;
+      }
+      const restoredMsgs: ChatMessage[] = SessionCodec.decode(restored);
+      if (restoredMsgs.length === 0) {
+        AppStorage.delete('restoredSession');
+        return false;
+      }
+      this.messages = restoredMsgs;
+      AppStorage.delete('restoredSession');
+      this.syncSessionSnapshot();
+      hilog.info(0x0000, 'Continuation', 'restore ok: msgs=%{public}d, chars=%{public}d',
+        restoredMsgs.length, restored.length);
+      return true;
+    } catch (err) {
+      hilog.error(0x0000, 'Continuation', 'restore failed: %{public}s', JSON.stringify(err));
       AppStorage.delete('restoredSession');
       return false;
     }
-    this.messages = restoredMsgs;
-    AppStorage.delete('restoredSession');
-    this.syncSessionSnapshot();
-    return true;
   }
 
   private syncSessionSnapshot(): void {
-    AppStorage.setOrCreate<string>('sessionSnapshot', SessionCodec.encode(this.messages));
+    // 接续参数只带最近 20 条且不带本机图片 URI(对端无法访问),避免超限与还原异常
+    const maxTransfer: number = 20;
+    const limited: ChatMessage[] = this.messages.length > maxTransfer
+      ? this.messages.slice(this.messages.length - maxTransfer)
+      : this.messages;
+    AppStorage.setOrCreate<string>('sessionSnapshot', SessionCodec.encode(limited, false));
     if (this.currentConversationId.length > 0) {
       this.conversationStore.save(this.currentConversationId, this.messages).then((): void => {
         this.conversationItems = this.conversationStore.summaries();
@@ -381,13 +401,10 @@ struct Index {
 
 
   private scrollToBottom(): void {
-    const index: number = this.messages.length - 1;
-    if (index < 0) {
-      return;
-    }
+    this.atBottom = true;
     setTimeout(() => {
       try {
-        this.scroller.scrollToIndex(index);
+        this.scroller.scrollEdge(Edge.Bottom);
       } catch (err) {
       }
     }, 80);
@@ -618,6 +635,11 @@ struct Index {
     if (this.agentRunning || this.loading) {
       return;
     }
+    const remaining: number = this.maxPendingImages - this.pendingImages.length;
+    if (remaining <= 0) {
+      this.showToast(`最多只能添加 ${this.maxPendingImages} 张图片`);
+      return;
+    }
     if (CapabilityManager.isEmulator()) {
       // 模拟器无真实相册/OCR:用占位图,发送走内置样例文本
       this.appendPending('sample://demo_1');
@@ -627,7 +649,7 @@ struct Index {
       const pickerInstance = new photoAccessHelper.PhotoViewPicker();
       const opts: photoAccessHelper.PhotoSelectOptions = {
         MIMEType: photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE,
-        maxSelectNumber: 9 - this.pendingImages.length
+        maxSelectNumber: remaining
       };
       const result: photoAccessHelper.PhotoSelectResult = await pickerInstance.select(opts);
       for (let i = 0; i < result.photoUris.length; i++) {
@@ -639,6 +661,10 @@ struct Index {
   }
 
   private appendPending(uri: string): void {
+    if (this.pendingImages.length >= this.maxPendingImages) {
+      this.showToast(`最多只能添加 ${this.maxPendingImages} 张图片`);
+      return;
+    }
     const next: string[] = this.pendingImages.concat(uri);
     this.pendingImages = next;
   }
@@ -759,7 +785,7 @@ struct Index {
         }
       }
       if (msg.imageUris.length > 0) {
-        Flex({ wrap: FlexWrap.Wrap }) {
+        Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
           ForEach(msg.imageUris.slice(0, 4), (uri: string) => {
             if (uri.startsWith('sample://')) {
               Column() {
@@ -947,7 +973,8 @@ struct Index {
         .border({ width: 1, color: UiTheme.Border })
         .shadow({ radius: 12, color: UiTheme.ShadowColor, offsetY: 3 })
       }
-      List({ space: 10, scroller: this.scroller }) {
+      Stack({ alignContent: Alignment.BottomEnd }) {
+        List({ space: 10, scroller: this.scroller }) {
         ForEach(this.messages, (msg: ChatMessage) => {
           ListItem() {
             Column() {
@@ -978,7 +1005,7 @@ struct Index {
         if (this.streamingVisible && this.streamingText.length > 0) {
           ListItem() {
             Row() {
-              Text(this.streamingText)
+              Text(MdParser.plain(this.streamingText))
                 .fontSize(16)
                 .fontColor(UiTheme.TextPrimary)
                 .lineHeight(23)
@@ -995,22 +1022,40 @@ struct Index {
         }
       }
       .width('100%')
-      .layoutWeight(1)
+      .height('100%')
       .padding({ left: 12, right: 12, top: 12, bottom: 6 })
       .scrollBar(BarState.Off)
+      .onReachEnd(() => {
+        this.atBottom = true;
+      })
+      .onDidScroll((offset: number, state: ScrollState) => {
+        this.atBottom = this.scroller.isAtEnd();
+      })
+      .onScrollStop(() => {
+        this.atBottom = this.scroller.isAtEnd();
+      })
 
-      if (this.messages.length > 5) {
-        Button('↓ 回到底部')
-          .height(30)
-          .fontSize(12)
-          .fontColor(UiTheme.Accent)
-          .backgroundColor(UiTheme.AccentSoft)
-          .borderRadius(15)
-          .margin({ bottom: 4 })
-          .onClick(() => {
-            this.scrollToBottom();
-          })
+      if (!this.atBottom) {
+        Button() {
+          Image($r('app.media.ic_arrow_down'))
+            .width(20)
+            .height(20)
+            .objectFit(ImageFit.Contain)
+        }
+        .width(40)
+        .height(40)
+        .type(ButtonType.Circle)
+        .backgroundColor(UiTheme.Card)
+        .border({ width: 1, color: UiTheme.Border })
+        .shadow({ radius: 12, color: UiTheme.ShadowColor, offsetX: 0, offsetY: 3 })
+        .margin({ right: 12, bottom: 12 })
+        .onClick(() => {
+          this.scrollToBottom();
+        })
       }
+      }
+      .width('100%')
+      .layoutWeight(1)
 
       if (this.pendingImages.length > 0) {
         Column() {
@@ -1052,12 +1097,14 @@ struct Index {
                 .height(64)
               }, (uri: string, idx: number) => `${uri}_${idx}`)
             }
+            .constraintSize({ minWidth: '100%' })
+            .justifyContent(FlexAlign.Start)
           }
           .scrollable(ScrollDirection.Horizontal)
           .width('100%')
 
           Row() {
-            Text('已选 ' + this.pendingImages.length + ' 张,可继续输入文字后一并发送')
+            Text('已选 ' + this.pendingImages.length + '/' + this.maxPendingImages + ' 张,可继续输入文字后一并发送')
               .fontSize(11)
               .fontColor(UiTheme.TextSubtle)
               .layoutWeight(1)
@@ -1092,20 +1139,18 @@ struct Index {
         .onClick(() => {
           this.toggleVoice();
         })
-        TextInput({ placeholder: this.voiceOn ? '聆听中,请说话…' : '输入消息…', text: this.inputText })
+        TextArea({ placeholder: this.voiceOn ? '聆听中,请说话…' : '输入消息…', text: this.inputText })
           .layoutWeight(1)
-          .height(42)
+          .constraintSize({ minHeight: 42, maxHeight: 120 })
           .fontSize(16)
           .fontColor(UiTheme.TextPrimary)
           .placeholderColor('#8A94A6')
           .backgroundColor('#EEF2F9')
           .border({ width: 1, color: '#D9E0EC' })
           .borderRadius(21)
+          .padding({ left: 12, right: 12, top: 8, bottom: 8 })
           .onChange((value: string) => {
             this.inputText = value;
-          })
-          .onSubmit((enterKey: EnterKeyType) => {
-            this.onSend();
           })
         Button() {
           Image($r('app.media.ic_plus'))
@@ -1138,6 +1183,7 @@ struct Index {
       }
       .width('100%')
       .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+      .alignItems(VerticalAlign.Bottom)
       .margin({ left: 10, right: 10, bottom: this.kbHeightPx > 0 ? `${this.kbHeightPx}px` : 10 })
       .backgroundColor(UiTheme.Card)
       .border({ width: 1, color: UiTheme.Border })

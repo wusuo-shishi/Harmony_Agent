@@ -37,7 +37,7 @@ export default class EntryAbility extends UIAbility {
         AppStorage.setOrCreate<string>('restoredSession', `${session}`);
         // 通知已运行的 UI(单实例热启动)刷新会话
         this.context.eventHub.emit('continuationRestore');
-        hilog.info(DOMAIN, TAG, 'Continuation payload received.');
+        hilog.info(DOMAIN, TAG, 'Continuation payload received, %{public}d chars', `${session}`.length);
       }
     } catch (err) {
       hilog.error(DOMAIN, TAG, 'Restore continuation payload failed: %{public}s', JSON.stringify(err));
@@ -47,11 +47,16 @@ export default class EntryAbility extends UIAbility {
   onContinue(wantParam: Record<string, Object>): AbilityConstant.OnContinueResult {
     try {
       const snapshot: string | undefined = AppStorage.get<string>('sessionSnapshot');
+      const maxTransferChars: number = 30000;
       if (snapshot === undefined || snapshot.length === 0) {
         // 无可迁移会话也同意迁移(至少界面会带过去)
         hilog.info(DOMAIN, TAG, '%{public}s', 'onContinue: no session snapshot');
+      } else if (snapshot.length > maxTransferChars) {
+        // 超长会话不写入 want 参数,避免超出参数体积上限导致对端启动异常
+        hilog.warn(DOMAIN, TAG, 'onContinue: snapshot too large(%{public}d), skip payload', snapshot.length);
       } else {
         wantParam['agentSession'] = snapshot;
+        hilog.info(DOMAIN, TAG, 'onContinue: payload=%{public}d chars', snapshot.length);
       }
       return AbilityConstant.OnContinueResult.AGREE;
     } catch (err) {

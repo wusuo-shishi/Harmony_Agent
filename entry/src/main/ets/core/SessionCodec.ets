@@ -1,19 +1,19 @@
 import { ChatMessage, ChatRole } from '../model/ChatModels';
 
 interface ChatMsgWire {
-  role: string;
-  content: string;
-  ts: number;
+  role?: string;
+  content?: string;
+  ts?: number;
   uris?: string[];
 }
 
 export class SessionCodec {
-  static encode(messages: ChatMessage[]): string {
+  static encode(messages: ChatMessage[], includeImages: boolean = true): string {
     const wires: ChatMsgWire[] = [];
     for (let i = 0; i < messages.length; i++) {
       const m: ChatMessage = messages[i];
       const w: ChatMsgWire = { role: m.role, content: m.content, ts: m.timestamp };
-      if (m.imageUris.length > 0) {
+      if (includeImages && m.imageUris.length > 0) {
         w.uris = m.imageUris;
       }
       wires.push(w);
@@ -25,24 +25,25 @@ export class SessionCodec {
     if (json.length === 0) {
       return [];
     }
-    let wires: ChatMsgWire[] = [];
     try {
-      wires = JSON.parse(json) as ChatMsgWire[];
+      const parsed = JSON.parse(json) as ChatMsgWire[];
+      if (parsed === undefined || parsed === null) {
+        return [];
+      }
+      const out: ChatMessage[] = [];
+      for (let i = 0; i < parsed.length; i++) {
+        const msg: ChatMessage = SessionCodec.wireToMessage(parsed[i]);
+        if (msg.content.length > 0 || msg.imageUris.length > 0) {
+          out.push(msg);
+        }
+      }
+      return out;
     } catch (err) {
       return [];
     }
-    const out: ChatMessage[] = [];
-    for (let i = 0; i < wires.length; i++) {
-      const w: ChatMsgWire = wires[i];
-      const msg: ChatMessage = SessionCodec.wireToMessage(w);
-      if (msg.content.length > 0 || msg.imageUris.length > 0) {
-        out.push(msg);
-      }
-    }
-    return out;
   }
 
-  static roleOf(raw: string): ChatRole {
+  static roleOf(raw: string | undefined): ChatRole {
     if (raw === 'user') {
       return ChatRole.User;
     }
@@ -54,12 +55,21 @@ export class SessionCodec {
 
   static wireToMessage(w: ChatMsgWire): ChatMessage {
     const msg: ChatMessage = new ChatMessage();
-    msg.role = SessionCodec.roleOf(w.role);
-    msg.content = w.content;
-    msg.timestamp = w.ts;
-    msg.id = `${w.ts}_restored`;
-    if (w.uris !== undefined && w.uris.length > 0) {
-      msg.imageUris = w.uris;
+    msg.role = SessionCodec.roleOf(w === undefined || w === null ? undefined : w.role);
+    const content: string | undefined = w === undefined || w === null ? undefined : w.content;
+    msg.content = content === undefined ? '' : `${content}`;
+    const ts: number | undefined = w === undefined || w === null ? undefined : w.ts;
+    msg.timestamp = ts === undefined ? Date.now() : ts;
+    msg.id = `${msg.timestamp}_restored`;
+    if (w !== undefined && w !== null && w.uris !== undefined && w.uris.length > 0) {
+      const uris: string[] = [];
+      for (let i = 0; i < w.uris.length; i++) {
+        const uri: string = w.uris[i];
+        if (uri !== undefined && uri.length > 0) {
+          uris.push(uri);
+        }
+      }
+      msg.imageUris = uris;
     }
     return msg;
   }

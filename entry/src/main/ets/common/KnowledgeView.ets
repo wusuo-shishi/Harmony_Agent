@@ -24,6 +24,7 @@ export struct KnowledgeView {
   @State previewTitle: string = '';
   @State previewContent: string = '';
   @State previewVisible: boolean = false;
+  @State paneNarrow: boolean = false;
   @State folders: KnowledgeFolder[] = [];
   @State currentFolderId: string = '';
   @State folderPath: string = '我的知识库';
@@ -511,7 +512,7 @@ export struct KnowledgeView {
     Stack({ alignContent: Alignment.Top }) {
       Column() {
       Row({ space: 8 }) {
-        TextInput({ placeholder: '检索知识库,如:引用溯源', text: this.query })
+        TextInput({ placeholder: '检索知识库', text: this.query })
           .layoutWeight(1)
           .height(42)
           .fontSize(15)
@@ -730,11 +731,15 @@ export struct KnowledgeView {
       .padding({ left: 12, right: 12, top: 8, bottom: 8 })
       .scrollBar(BarState.Off)
 
-      Row({ space: 12 }) {
-        Button(this.importing ? '处理中…' : '恢复示例文档')
-          .layoutWeight(1)
+      Flex({
+        direction: this.paneNarrow ? FlexDirection.Column : FlexDirection.Row,
+        justifyContent: FlexAlign.SpaceBetween
+      }) {
+        Button(this.importing ? '处理中…' : '恢复示例')
+          .width(this.paneNarrow ? '100%' : '48%')
           .height(44)
-          .fontSize(15)
+          .fontSize(14)
+          .padding({ left: 6, right: 6 })
           .enabled(!this.importing)
           .backgroundColor(UiTheme.Card)
           .fontColor(UiTheme.Accent)
@@ -744,13 +749,15 @@ export struct KnowledgeView {
             this.onSeedSamples();
           })
         Button(this.importing ? '处理中…' : '导入文档')
-          .layoutWeight(1)
+          .width(this.paneNarrow ? '100%' : '48%')
           .height(44)
-          .fontSize(15)
+          .fontSize(14)
+          .padding({ left: 6, right: 6 })
           .enabled(!this.importing)
           .backgroundColor('#4C6EF5')
           .fontColor('#FFFFFF')
           .borderRadius(22)
+          .margin({ top: this.paneNarrow ? 8 : 0 })
           .onClick(() => {
             this.onPickFile();
           })
@@ -758,6 +765,10 @@ export struct KnowledgeView {
       .width('100%')
       .padding({ left: 12, right: 12, top: 6, bottom: 12 })
       .backgroundColor(UiTheme.Bg)
+      .onAreaChange((oldValue: Area, newValue: Area) => {
+        const width: Length = newValue.width;
+        this.paneNarrow = typeof width === 'number' ? width < 280 : false;
+      })
       }
       .width('100%')
       .height('100%')

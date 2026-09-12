@@ -74,14 +74,15 @@ export class MdParser {
   }
 
   private static classify(line: string): MdRow {
-    if (line.startsWith('### ')) {
-      return MdRow.of(MdRowKind.SubHeading, MdParser.clean(line.substring(4)));
-    }
-    if (line.startsWith('## ')) {
-      return MdRow.of(MdRowKind.SubHeading, MdParser.clean(line.substring(3)));
-    }
-    if (line.startsWith('# ')) {
-      return MdRow.of(MdRowKind.Heading, MdParser.clean(line.substring(2)));
+    if (line.startsWith('#')) {
+      let hashCount: number = 0;
+      while (hashCount < line.length && line.charAt(hashCount) === '#') {
+        hashCount++;
+      }
+      const headingBody: string = MdParser.clean(line.substring(hashCount));
+      if (headingBody.length > 0) {
+        return MdRow.of(hashCount >= 3 ? MdRowKind.SubHeading : MdRowKind.Heading, headingBody);
+      }
     }
     if (line.startsWith('> ')) {
       return MdRow.of(MdRowKind.Quote, MdParser.clean(line.substring(2)));
@@ -95,8 +96,27 @@ export class MdParser {
   private static clean(text: string): string {
     let s: string = text.trim();
     s = MdParser.replaceAll(s, '**', '');
+    s = MdParser.replaceAll(s, '__', '');
     s = MdParser.replaceAll(s, '`', '');
+    s = MdParser.replaceAll(s, '*', '');
     return s;
+  }
+
+  /** 流式输出时使用:去掉标记符号,仅保留纯文本,避免打字过程中露出 Markdown 语法 */
+  static plain(raw: string): string {
+    const rows: MdRow[] = MdParser.parse(raw);
+    const parts: string[] = [];
+    for (let i = 0; i < rows.length; i++) {
+      const row: MdRow = rows[i];
+      if (row.kind === MdRowKind.Empty) {
+        parts.push('');
+      } else if (row.kind === MdRowKind.Bullet) {
+        parts.push(`• ${row.text}`);
+      } else {
+        parts.push(row.text);
+      }
+    }
+    return parts.join('\n');
   }
 
   private static replaceAll(value: string, from: string, to: string): string {
