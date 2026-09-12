@@ -299,6 +299,23 @@ struct Index {
     this.scrollToBottom();
   }
 
+  private buildContext(): ChatMessage[] {
+    const maxTurns: number = 8;
+    const result: ChatMessage[] = [];
+    const end: number = this.messages.length - 1;
+    const start: number = end - maxTurns > 0 ? end - maxTurns : 0;
+    for (let i = start; i < end; i++) {
+      const m: ChatMessage = this.messages[i];
+      const content: string = m.content.trim();
+      if (content.length === 0) {
+        continue;
+      }
+      const clipped: string = content.length > 500 ? content.substring(0, 500) : content;
+      result.push(ChatMessage.of(m.role, clipped));
+    }
+    return result;
+  }
+
   private async confirmScheduleDraft(draft: ScheduleDraft): Promise<boolean> {
     const start = new Date(draft.startTime);
     const end = new Date(draft.endTime);
@@ -523,6 +540,7 @@ struct Index {
     if (deps.uiContext === undefined) {
       deps.uiContext = this.context();
     }
+    deps.context = this.buildContext();
     if (!KnowledgeStore.shared.isReady()) {
       try {
         await KnowledgeStore.shared.init(this.context());

@@ -145,13 +145,40 @@ export class ScheduleTextParser {
       if (hour < 12) {
         hour += 12;
       }
-    } else if (text.indexOf('上午') < 0 && text.indexOf('早上') < 0 && hour >= 1 && hour < 8) {
+    } else if (text.indexOf('中午') >= 0) {
+      if (hour >= 1 && hour <= 6) {
+        hour += 12;
+      }
+    } else if (text.indexOf('上午') < 0 && text.indexOf('早上') < 0 && text.indexOf('凌晨') < 0 &&
+      text.indexOf('清晨') < 0 && hour >= 1 && hour < 8) {
       hour += 12;
     }
     return TimeToken.of(hour, minute);
   }
 
+  private static digitsOf(raw: string): string {
+    let out: string = '';
+    for (let i = 0; i < raw.length; i++) {
+      const code: number = raw.charCodeAt(i);
+      if (code >= 48 && code <= 57) {
+        out += String.fromCharCode(code);
+      } else if (code >= 65296 && code <= 65305) {
+        out += String.fromCharCode(code - 65296 + 48);
+      } else {
+        return '';
+      }
+    }
+    return out;
+  }
+
   private static hourOfText(raw: string): number {
+    const digits: string = ScheduleTextParser.digitsOf(raw);
+    if (digits.length > 0) {
+      const value: number = parseInt(digits, 10);
+      if (value >= 0 && value <= 24) {
+        return value;
+      }
+    }
     const chineseFull: string[] = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二', '十三', '十四', '十五', '十六', '十七', '十八', '十九', '二十', '二十一', '二十二', '二十三', '二十四'];
     for (let i = 0; i < chineseFull.length; i++) {
       if (raw === chineseFull[i]) {

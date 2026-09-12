@@ -11,7 +11,7 @@ export class LearningAgent {
   readonly agentName: string = '学习助手';
 
   async run(query: string, llm: LLMProvider, retrieval: RetrievalProvider, onStep: StepListener,
-    onDelta?: ChatDeltaHandler): Promise<AgentRunResult> {
+    onDelta?: ChatDeltaHandler, context?: ChatMessage[]): Promise<AgentRunResult> {
     const steps: AgentStep[] = [];
     steps.push(AgentStep.of('1. 解析问题(意图:知识库问答)'));
     onStep(steps);
@@ -25,11 +25,11 @@ export class LearningAgent {
     } catch (err) {
       hits = [];
     }
-    return await this.answerWithHitsInto(query, llm, hits, steps, onStep, onDelta);
+    return await this.answerWithHitsInto(query, llm, hits, steps, onStep, onDelta, context);
   }
 
   async answerWithHitsInto(query: string, llm: LLMProvider, hits: RetrievalHit[], steps: AgentStep[],
-    onStep: StepListener, onDelta?: ChatDeltaHandler): Promise<AgentRunResult> {
+    onStep: StepListener, onDelta?: ChatDeltaHandler, context?: ChatMessage[]): Promise<AgentRunResult> {
     const result: AgentRunResult = new AgentRunResult();
     result.kind = AgentKind.Learning;
     result.agentName = this.agentName;
@@ -41,7 +41,8 @@ export class LearningAgent {
     onStep(steps);
 
     const prompt: string = buildRagPrompt(query, hits);
-    const messages: ChatMessage[] = [ChatMessage.of(ChatRole.User, prompt)];
+    const base: ChatMessage[] = context ?? [];
+    const messages: ChatMessage[] = base.concat([ChatMessage.of(ChatRole.User, prompt)]);
     let answer: string = '';
     try {
       answer = await llm.streamChat(messages, (delta: string): void => {

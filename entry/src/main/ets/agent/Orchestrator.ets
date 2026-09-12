@@ -31,6 +31,7 @@ export class AgentDeps {
   schedule: ScheduleProvider;
   vision: VisionProvider;
   store: KnowledgeStore;
+  context: ChatMessage[] = [];
   uiContext: common.UIAbilityContext | undefined = undefined;
   imageUri: string = '';
   imageUris: string[] = [];
@@ -64,7 +65,7 @@ export class Orchestrator {
     }
     const intent: IntentResult = IntentRouter.route(text);
     if (intent.kind === AgentKind.Learning) {
-      return await this.learning.run(text, deps.llm, deps.retrieval, onStep, onDelta);
+      return await this.learning.run(text, deps.llm, deps.retrieval, onStep, onDelta, deps.context);
     }
     if (intent.kind === AgentKind.Schedule) {
       this.prepareScheduleProvider(deps);
@@ -78,7 +79,7 @@ export class Orchestrator {
       const result: AgentRunResult = new AgentRunResult();
       result.kind = AgentKind.General;
       result.agentName = '通用对话';
-      const history: ChatMessage[] = [ChatMessage.of(ChatRole.User, text)];
+      const history: ChatMessage[] = deps.context.concat([ChatMessage.of(ChatRole.User, text)]);
       try {
         result.answer = await deps.llm.streamChat(history, (delta: string): void => {
           onDelta?.(delta);
@@ -100,7 +101,7 @@ export class Orchestrator {
       onStep(steps);
       steps.push(AgentStep.of('2. 检索知识库(命中,进入知识问答)'));
       onStep(steps);
-      return await this.learning.answerWithHitsInto(text, deps.llm, probeHits, steps, onStep, onDelta);
+      return await this.learning.answerWithHitsInto(text, deps.llm, probeHits, steps, onStep, onDelta, deps.context);
     }
     const result: AgentRunResult = new AgentRunResult();
     result.kind = AgentKind.General;
@@ -124,9 +125,31 @@ export class Orchestrator {
     result.kind = AgentKind.General;
     const steps: AgentStep[] = [];
     const history: ToolMessage[] = [];
-    history.push(ToolMessage.user(text));
+    for (let i = 0; i < deps.context.length; i++) {
+      const cm: ChatMessage = deps.context[i];
+      if (cm.role === ChatRole.Assistant) {
+        history.push(ToolMessage.assistantCalls(cm.content, []));
+      } else if (cm.role === ChatRole.User) {
+        history.push(ToolMessage.user(cm.content));
+      }
+    }
+    const imageCount: number = this.countAttachedImages(deps);
+    history.push(ToolMessage.user(this.buildAgenticInput(text, imageCount)));
     const toolsJson: string = AgentTools.buildToolsJson();
     let finalText: string = '';
+    if (imageCount > 0) {
+      const call: ToolCallMsg = ToolCallMsg.of('forced_image_ocr', 'recognize_summarize', '{}');
+      const step: AgentStep = AgentStep.of(`强制识别随附图片(${imageCount} 张):recognize_summarize`);
+      steps.push(step);
+      onStep(steps);
+      const out: string = await this.execTool('recognize_summarize', '{}', text, deps, onStep, onDelta);
+      const safeOut: string = out.length > 1500 ? out.substring(0, 1500) : out;
+      history.push(ToolMessage.assistantCalls('', [call]));
+      history.push(ToolMessage.toolResult(call.id, safeOut));
+      step.state = StepState.Done;
+      step.detail = out.length > 0 ? out.substring(0, 60) : '空结果';
+      onStep(steps);
+    }
     try {
       for (let round = 0; round < 5; round++) {
         const turn: AgentToolTurn = await llm.chatWithTools(history, toolsJson);
@@ -170,12 +193,26 @@ export class Orchestrator {
     return result;
   }
 
+  private countAttachedImages(deps: AgentDeps): number {
+    if (deps.imageUris.length > 0) {
+      return deps.imageUris.length;
+    }
+    return deps.imageUri.length > 0 ? 1 : 0;
+  }
+
+  private buildAgenticInput(text: string, imageCount: number): string {
+    if (imageCount <= 0) {
+      return text;
+    }
+    return `${text}\n\n(本次消息随附了 ${imageCount} 张图片,请优先调用 recognize_summarize 识别并总结图片内容,不要只检索知识库。)`;
+  }
+
   private async execTool(name: string, argsJson: string, originText: string, deps: AgentDeps,
     onStep: StepListener, onDelta?: ChatDeltaHandler): Promise<string> {
     if (name === 'search_knowledge') {
       const q: string = AgentTools.readStringArg(argsJson, 'query');
       const query: string = q.length > 0 ? q : originText;
-      const sub = await this.learning.run(query, deps.llm, deps.retrieval, onStep, onDelta);
+      const sub = await this.learning.run(query, deps.llm, deps.retrieval, onStep, onDelta, deps.context);
       return sub.answer;
     }
     if (name === 'recognize_summarize') {
@@ -295,7 +332,7 @@ export class Orchestrator {
         allSteps.push(stepHead);
         onStep(allSteps);
         const learnText: string = carry.length > 0 ? carry : text;
-        sub = await this.learning.run(learnText, deps.llm, deps.retrieval, onStep, onDelta);
+        sub = await this.learning.run(learnText, deps.llm, deps.retrieval, onStep, onDelta, deps.context);
       }
       subResults.push(sub);
       if (sub.payload.length > 0) {

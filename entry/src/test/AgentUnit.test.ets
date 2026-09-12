@@ -224,6 +224,31 @@ export default function agentUnitTest() {
         expect(new Date(p.draft.startTime).getHours()).assertEqual(10);
       }
     });
+
+    it('noon12oclock_parsesAsTwelve', 0, () => {
+      const p: ParsedSchedule = ScheduleTextParser.parse('明天中午12点开组会');
+      expect(p.found).assertTrue();
+      if (p.found) {
+        expect(new Date(p.draft.startTime).getHours()).assertEqual(12);
+        expect(new Date(p.draft.startTime).getMinutes()).assertEqual(0);
+      }
+    });
+
+    it('twoDigitHour_parsesCorrectly', 0, () => {
+      const p: ParsedSchedule = ScheduleTextParser.parse('明天上午11点开会');
+      expect(p.found).assertTrue();
+      if (p.found) {
+        expect(new Date(p.draft.startTime).getHours()).assertEqual(11);
+      }
+    });
+
+    it('noonOneOclock_isAfternoon', 0, () => {
+      const p: ParsedSchedule = ScheduleTextParser.parse('明天中午1点开会');
+      expect(p.found).assertTrue();
+      if (p.found) {
+        expect(new Date(p.draft.startTime).getHours()).assertEqual(13);
+      }
+    });
   });
 
   describe('ChainPlanner', () => {
